@@ -1,0 +1,221 @@
+/**********************************
+ * PICO W MOTION DETECTION SYSTEM FIRMWARE
+ * By: Ryan Challacombe
+ * Date: 9/6/2026
+ * Version: 0.1
+ **********************************/
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/i2c.h"
+#include "pico/cyw43_arch.h"
+#include <string.h>
+#include "pico/binary_info.h"
+#include "include/wifi_info.h"
+
+
+/**********************************
+ *  LIS3DH SETTINGS
+**********************************/
+// LIS3DH address
+const int ADDRESS = 0x18;
+
+// control reg settings
+const uint8_t CTRL_REG_1 = 0x20;    
+// const uint8_t SET_CTRL_REG_1 = 0x97;     // enable 3 axes, high res / nomal power mode, ref table 29-31, 10
+// const uint8_t SET_CTRL_REG_1 = 0x27;        // enable 3 axes, high res/normal power mode/10Hz, ref table 29-31, 10
+const uint8_t SET_CTRL_REG_1 = 0x77;        // enable 3 axes, high res/normal power mode/400Hz, ref table 29-31, 10
+
+const uint8_t CTRL_REG_4 = 0x23;
+//const uint8_t SET_CTRL_REG_4 = 0x80;    // block data update enabled, +/-2g FS, ref table 37-38
+const uint8_t SET_CTRL_REG_4 = 0x00;        // +/-2g FS
+// const uint8_t SET_CTRL_REG_4 = 0x16;    // +/-4g FS
+
+// interrupt settings
+const uint8_t CTRL_REG_3 = 0x22;        // interrupt control register
+const uint8_t SET_CTRL_REG_3 = 0x3C;    // enable interrupt when IA (interrupt active) + others...
+
+// interrupt settings
+const uint8_t CTRL_REG_5 = 0x24;        // interrupt control register
+const uint8_t SET_CTRL_REG_5 = 0x08;    // latch interrupt 1
+
+// Don't believe we need this one
+//const uint8_t REFERENCE = 0x26;     // reference value for interrupt generation
+
+// INT1_CFG = 0x30, INT1_SRC = 0x31, INT1_THS = 0x32, INT1_DURATION = 0x33
+const uint8_t INT1_CFG = 0x30;
+//const uint8_t SET_INT1_CFG = 0x3F;    // Enable interrupt on all axes, ref table 53
+//const uint8_t SET_INT1_CFG = 0x6A;      // Enable interrupt on HIGH threshold on all axes, ref table 53
+const uint8_t SET_INT1_CFG = 0x60;      // Enable interrupt on HIGH threshold on Z-axis, ref table 53
+
+const uint8_t INT1_SRC = 0x31;
+
+const uint8_t INT1_THS = 0x32;        
+//const uint8_t SET_INT1_THS = 0x3F;    // 63 LSBs, ref table 59
+//const uint8_t SET_INT1_THS = 0x50;      // 80 LSBs, ref table 59
+const uint8_t SET_INT1_THS = 0x6E;      // 110 LSBs, ref table 59
+
+const uint8_t INT1_DURATION = 0x33;
+const uint8_t SET_INT1_DURATION = 0x01;  // 1 decimal, ref table 61
+
+/**********************************
+ *  FUNCTION DEFINITIONS
+**********************************/
+void lis3dh_init() {
+    uint8_t buf[2];
+
+    // Turn normal mode and 1.344kHz data rate on
+    // ODR = 0b1001 (1.344kHz), LPen = 0 (normal mode), Zen = Yen = Xen = 1 (enable all axes)
+    buf[0] = CTRL_REG_1;
+    buf[1] = SET_CTRL_REG_1;      
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+
+    // Reg 4
+    buf[0] = CTRL_REG_4;
+    buf[1] = SET_CTRL_REG_4;          
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+
+    // latch interrupt 
+    buf[0] = CTRL_REG_5;
+    buf[1] = SET_CTRL_REG_5;  
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+
+    // enable interrupt on IA 
+    buf[0] = CTRL_REG_3;
+    buf[1] = SET_CTRL_REG_3;  
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+
+    // Turn on interrupt 1
+    buf[0] = INT1_CFG;
+    buf[1] = SET_INT1_CFG;
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+
+    // Set threshold for interrupt 1 to 0x10 (16 decimal), ref table 59
+    buf[0] = INT1_THS;  
+    buf[1] = SET_INT1_THS;  
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+
+    // Set duration for interrupt 1
+    buf[0] = INT1_DURATION; 
+    buf[1] = SET_INT1_DURATION;  // 1 decimal, ref table 61
+    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
+}
+
+void lis3dh_calc_value(uint16_t raw_value, float *final_value, bool isAccel) {
+    // Convert with respect to the value being temperature or acceleration reading 
+    float scaling;
+    float senstivity = 0.004f; // g per unit
+
+    if (isAccel == true) {
+        scaling = 64 / senstivity;
+    } else {
+        scaling = 64;
+    }
+
+    // raw_value is signed
+    *final_value = (float) ((int16_t) raw_value) / scaling;
+}
+
+void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel) {
+    // Read two bytes of data and store in a 16 bit data structure
+    uint8_t lsb;
+    uint8_t msb;
+    uint16_t raw_accel;
+    i2c_write_blocking(i2c_default, ADDRESS, &reg, 1, true);
+    i2c_read_blocking(i2c_default, ADDRESS, &lsb, 1, false);
+
+    reg |= 0x01;        // reg = reg | 0x01, effectively adds on for the registers 28, 2A, 2C
+    i2c_write_blocking(i2c_default, ADDRESS, &reg, 1, true);
+    i2c_read_blocking(i2c_default, ADDRESS, &msb, 1, false);
+
+    raw_accel = (msb << 8) | lsb;
+
+    lis3dh_calc_value(raw_accel, final_value, IsAccel);
+}
+
+int main()
+{
+    /**********************************
+     *  GENERAL SETUP
+     **********************************/
+    stdio_init_all();
+
+    busy_wait_ms(5000);     // wait for USB serial
+
+    /**********************************
+     *  WIFI SETUP
+     **********************************/
+
+    // Initialise the Wi-Fi chip
+    if (cyw43_arch_init()) {
+        printf("Wi-Fi init failed\n");
+        return -1;
+    }
+
+    // Enable wifi station
+    cyw43_arch_enable_sta_mode();
+
+    printf("Connecting to Wi-Fi...\n");
+    if (cyw43_arch_wifi_connect_timeout_ms(wifi_ssid, wifi_pw, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+        printf("failed to connect.\n");
+        return 1;
+    } else {
+        printf("Connected.\n");
+        // Read the ip address in a human readable way
+        uint8_t *ip_address = (uint8_t*)&(cyw43_state.netif[0].ip_addr.addr);
+        printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+    }
+
+    busy_wait_ms(5000);
+
+    /**********************************
+     *  I2C SETUP
+    *********************************/
+   
+    // This example will use I2C0 on the default SDA and SCL pins (4, 5 on a Pico)
+    i2c_init(i2c_default, 400 * 1000);
+    gpio_set_function(PICO_DEFAULT_I2C_SDA_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C);
+    gpio_pull_up(PICO_DEFAULT_I2C_SDA_PIN);
+    gpio_pull_up(PICO_DEFAULT_I2C_SCL_PIN);
+    // Make the I2C pins available to picotool
+    bi_decl(bi_2pins_with_func(PICO_DEFAULT_I2C_SDA_PIN, PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C));
+
+    float x_accel, y_accel, z_accel;
+
+    lis3dh_init();
+    bool int_triggered = false;
+    const uint8_t int1_src_addr = INT1_SRC;
+    uint8_t int1_src = 0;
+
+    printf("Starting while() loop ....");
+    while (true) {
+        lis3dh_read_data(0x28, &x_accel, true);
+        lis3dh_read_data(0x2A, &y_accel, true);
+        lis3dh_read_data(0x2C, &z_accel, true);
+
+        if (int_triggered) {
+            printf("An interrupt has been triggered since main() began\n");
+        }
+
+        // check if interrupt has been triggered
+        int1_src = 0;
+        i2c_write_blocking(i2c_default, ADDRESS, &int1_src_addr, 1, true);
+        i2c_read_blocking(i2c_default, ADDRESS, &int1_src, 1, false);
+        if (int1_src & 0x40) {
+            int_triggered = true;
+            printf("Interrupt triggered!\n");
+        }
+
+        // Display data 
+        // Acceleration is read as a multiple of g (gravitational acceleration on the Earth's surface)
+        printf("ACCELERATION VALUES: \n");
+        printf("X acceleration: %.3fg\n", x_accel);
+        printf("Y acceleration: %.3fg\n", y_accel);
+        printf("Z acceleration: %.3fg\n", z_accel);
+
+        sleep_ms(500);
+
+        // Clear terminal 
+        printf("\033[1;1H\033[2J");
+    }
+}
