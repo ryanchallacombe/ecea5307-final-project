@@ -1,3 +1,3 @@
 build
 !.vscode/*
-include/*
+include/wifi_info.h
