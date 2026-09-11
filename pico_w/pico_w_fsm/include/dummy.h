@@ -1,0 +1,1 @@
+// Dummy to test gitignore won't ignore it
