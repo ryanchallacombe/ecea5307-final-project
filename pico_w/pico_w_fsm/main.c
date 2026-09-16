@@ -19,8 +19,15 @@ enum State : uint16_t
 {
     S_INITIALIZE,
     S_LOOP,
+    S_LIS3DH_INTERRUPT,
     S_ERROR
 };
+
+/**********************************
+ *  MACROS
+**********************************/
+
+#define GPIO_INT_PIN 0
 
 /**********************************
  *  GLOBALS
@@ -74,7 +81,8 @@ const uint8_t INT1_DURATION = 0x33;
 const uint8_t SET_INT1_DURATION = 0x01;  // 1 decimal, ref table 61
 
 float x_accel, y_accel, z_accel;
-bool int_triggered = false;
+
+bool lis3dh_int_triggered = false;      // flag that is set in the gpio interrupt callback
 const uint8_t int1_src_addr = INT1_SRC;
 uint8_t int1_src = 0;
 
@@ -88,6 +96,8 @@ void uponEnter( const enum State state );
 void updateStateMachine( const enum State state );
 void uponExit( const enum State state );
 const char *stateToString ( const enum State state );
+void gpio_callback( uint gpio, uint32_t events );
+
 
 /**********************************
  *  MAIN
@@ -101,6 +111,8 @@ int main()
     printf("Starting while() loop ....");
 
     while(true) {
+        // todo: add some loop timing control here
+
         // Udate FSM
         updateStateMachine( currentState );
 
@@ -169,10 +181,21 @@ void uponEnter( const enum State state ) {
             bi_decl(bi_2pins_with_func(PICO_DEFAULT_I2C_SDA_PIN, PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C));
             lis3dh_init();
 
+            /**********************************
+             *  GPIO INTERRUPT SETUP
+            *********************************/
+            gpio_init(GPIO_INT_PIN);
+            gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, true, &gpio_callback);
+
             break;
         }
 
         case S_LOOP:
+            break;
+        case S_LIS3DH_INTERRUPT:
+            // todo: 
+            // potentially read where the interrupt came from and get some info
+            // notify client of interrupt
             break;
         case S_ERROR:
             break;
@@ -190,7 +213,7 @@ void updateStateMachine( const enum State state ) {
         {
             if (s_initialize_fail)
             {
-                // go to error state
+                nextState( S_ERROR );
 
             }
             else
@@ -202,6 +225,15 @@ void updateStateMachine( const enum State state ) {
 
         case S_LOOP:
         {
+
+            if ( lis3dh_int_triggered ) {
+                nextState( S_LIS3DH_INTERRUPT );
+            }
+
+
+
+
+            // todo:   really just need to wait for an interrupt then handle it
             lis3dh_read_data(0x28, &x_accel, true);
             lis3dh_read_data(0x2A, &y_accel, true);
             lis3dh_read_data(0x2C, &z_accel, true);
@@ -347,4 +379,9 @@ void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel) {
     raw_accel = (msb << 8) | lsb;
 
     lis3dh_calc_value(raw_accel, final_value, IsAccel);
+}
+
+void gpio_callback(uint gpio, uint32_t events) {
+    lis3dh_int_triggered = true;
+    return;
 }

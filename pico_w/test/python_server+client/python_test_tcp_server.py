@@ -4,7 +4,7 @@ import random
 import socket
 
 # Set server address to machines IP
-SERVER_ADDR = "0.0.0.0"
+SERVER_ADDR = "192.168.86.32"
 
 # These constants should match the client
 BUF_SIZE = 2048
