@@ -3,14 +3,17 @@
 import socket
 import sys
 import time
+import struct
 
-# ID query
+# queries
 Q_IDN = b'IDN?\n'
-R_IDN = 'surrogate for pico w'
+R_IDN = 'pico w'
 
-# Status query
+
 Q_STAT = b'STAT?\n'
 R_STAT = 'OK'
+
+Q_DATA = b'DATA?\n'
 
 # Check server ip address set
 if len(sys.argv) < 2:
@@ -28,7 +31,9 @@ sock = socket.socket()
 addr = (SERVER_ADDR, SERVER_PORT)
 sock.connect(addr)
 
+###################
 # query ID
+###################
 msg = Q_IDN
 write_len = sock.send(msg)
 print('wrote %d bytes to server' % write_len)
@@ -49,6 +54,34 @@ print('Received message: %s' % buf_str )
 # check for a correct value here
 if buf_str != R_IDN:
     print('Unexpected response received')
+
+###################
+# query data
+###################
+msg = Q_DATA
+write_len = sock.send(msg)
+print('wrote %d bytes to server' % write_len)
+if write_len != len(msg):
+    raise RuntimeError('wrong amount of data written')
+
+time.sleep(5)
+
+# receive response
+response_len = 5
+buf = sock.recv(response_len)
+print('read %d bytes from client' % len(buf))
+
+# display and handle the message
+#buf_str = buf.decode('utf-8').strip()
+buf_str = buf.decode()
+print('Received message: %s' % buf_str )
+
+
+
+
+###################
+# loop
+###################
 
 while True:
     # loop infinitely

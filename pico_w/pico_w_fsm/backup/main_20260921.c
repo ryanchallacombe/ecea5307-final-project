@@ -44,13 +44,11 @@ enum FSM_State currentState, nextState;
 bool s_initialize_fail = false;
 bool s_server_setup_fail = false;
 bool s_lis3dh_setup_fail = false;
-bool s_lis3dh_interrupt_fail = false;
 
 char *Q_IDN = "IDN?";
 char *Q_DATA = "DATA?";
 
 bool data_requested = false;     // set in handle_recved_msg() and reset in tcp_send_data()
-err_t g_err = ERR_OK;
 
 typedef struct TCP_SERVER_T_ {
     struct tcp_pcb *server_pcb;
@@ -58,20 +56,10 @@ typedef struct TCP_SERVER_T_ {
     char recv_buffer[BUF_SIZE];
     char send_buffer[BUF_SIZE];
     float send_data_buffer[BUF_SIZE];
-    //struct DATA_MSG_T struct_data[BUF_SIZE];
-    //struct data_msg struct_data;
     int send_len;
     int sent_len;
     int recv_len;
 } TCP_SERVER_T;
-
-struct data_msg {
-    float data;
-};
-
-/* typedef struct DATA_MSG_T {
-    float data;
-}vDATA_MSG_T; */
 
 /*******************
  *  LIS3DH SETTINGS
@@ -135,11 +123,12 @@ uint8_t int1_src = 0;
 void lis3dh_init();
 void lis3dh_calc_value(uint16_t raw_value, float *final_value, bool isAccel);
 void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel);
-void uponEnter( const enum FSM_State fsm_state, void *arg );
+void uponEnter( const enum FSM_State fsm_state );
 void updateStateMachine( const enum FSM_State fsm_state );
 void uponExit( const enum FSM_State fsm_state );
 const char *stateToString ( const enum FSM_State fsm_state );
 void gpio_callback( uint gpio, uint32_t events );
+
 static TCP_SERVER_T* tcp_server_init(void);
 static bool tcp_server_open(void *arg);
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err);
@@ -157,64 +146,11 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis);
 **********************************/
 int main()
 {
-    /**********************************
-     *  GENERAL SETUP
-     **********************************/
-    stdio_init_all();
-    busy_wait_ms(5000); // wait for USB serial
-
-    /**********************************
-     *  WIFI SETUP
-     **********************************/
-    // Initialise the Wi-Fi chip
-    if (cyw43_arch_init())
-    {
-        printf("Wi-Fi init failed\n");
-        //s_initialize_fail = true;
-        return -1;
-    }
-
-    // Enable wifi station
-    cyw43_arch_enable_sta_mode();
-
-    printf("Connecting to Wi-Fi...\n");
-    if (cyw43_arch_wifi_connect_timeout_ms(wifi_ssid, wifi_pw, CYW43_AUTH_WPA2_AES_PSK, 30000))
-    {
-        printf("failed to connect.\n");
-        //s_initialize_fail = true;
-        return -1;
-    }
-    else
-    {
-        printf("Connected.\n");
-        // Read the ip address in a human readable way
-        uint8_t *ip_address = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
-        printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
-    }
-    busy_wait_ms(500);
-
-    /**********************************
-     *  SERVER SETUP
-     **********************************/
-    TCP_SERVER_T *tcp_state = tcp_server_init();
-    if (!tcp_state)
-    {
-        printf("tcp_server_init failed\n");
-        return -1;
-    }
-    // This will block until the client connects
-    if (!tcp_server_open(tcp_state))
-    {
-        printf("tcp_server_open failed\n");
-        free(tcp_state);
-        return -1;
-    }
-
     currentState = nextState = S_INITIALIZE;
 
-    uponEnter(currentState, tcp_state);
+    uponEnter(currentState);
 
-    printf("Starting while() loop ....\n");
+    printf("Starting while() loop ....");
 
     while(true) {
         sleep_ms(500);
@@ -225,7 +161,7 @@ int main()
         // Handle FSM_State Transitions
         if ( nextState != currentState ) {
             uponExit( currentState );
-            uponEnter( nextState, tcp_state);
+            uponEnter( nextState );
             currentState = nextState;   
         } 
     } // while
@@ -235,17 +171,56 @@ int main()
  *  FUNCTION DEFINITIONS
 **********************************/
 
-void uponEnter( const enum FSM_State fsm_state, void *arg ) {
+void uponEnter( const enum FSM_State fsm_state ) {
     printf("Entering fsm_state: %s\n", stateToString(fsm_state));
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
 
     switch (fsm_state) {
         case S_INITIALIZE:
         {
+            /**********************************
+             *  GENERAL SETUP
+             **********************************/
+            stdio_init_all();
+            busy_wait_ms(5000);     // wait for USB serial
+
+            /**********************************
+             *  WIFI SETUP
+             **********************************/
+            // Initialise the Wi-Fi chip
+            if (cyw43_arch_init()) {
+                printf("Wi-Fi init failed\n");
+                s_initialize_fail = true;
+            }
+
+            // Enable wifi station
+            cyw43_arch_enable_sta_mode();
+
+            printf("Connecting to Wi-Fi...\n");
+            if (cyw43_arch_wifi_connect_timeout_ms(wifi_ssid, wifi_pw, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+                printf("failed to connect.\n");
+                // TODO handle this differently
+                s_initialize_fail = true;
+            } else {
+                printf("Connected.\n");
+                // Read the ip address in a human readable way
+                uint8_t *ip_address = (uint8_t*)&(cyw43_state.netif[0].ip_addr.addr);
+                printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+            }
+            busy_wait_ms(500);
             break;
         }
         case S_SERVER_SETUP:
         {
+            TCP_SERVER_T *state = tcp_server_init();
+            if (!state) {
+                printf("tcp_server_init failed\n");
+                s_server_setup_fail = true;
+            }
+            // This will block until the client connects
+            if (!tcp_server_open(state)) {
+                printf("tcp_server_open failed\n");
+                s_server_setup_fail = true;
+            }
             break;
         }
         case S_LIS3DH_SETUP:
@@ -278,30 +253,21 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
             break;
         case S_LIS3DH_INTERRUPT:
         {
-            // read where the interrupt came from and get some info
+            // todo: 
+            // potentially read where the interrupt came from and get some info
+            // notify client of interrupt
             uint8_t int1_src = 0;
             i2c_write_blocking(i2c_default, ADDRESS, &int1_src_addr, 1, true);
             i2c_read_blocking(i2c_default, ADDRESS, &int1_src, 1, false);
             printf("INT1_SRC: 0x%02X\n", int1_src);
 
-            // tell the client about the interrupt
-            memset(tcp_state->send_buffer, 0, BUF_SIZE); // clear send buffer
-            char *msg = "interrupt occured";
-            strncpy(tcp_state->send_buffer, msg, strlen(msg));
-            tcp_state->send_len = strlen(msg);
-            g_err = tcp_server_send_data(arg, tcp_state->client_pcb);
-            if (g_err != ERR_OK) {
-                printf("error: failed to notify client of interrupt\n");
-                s_lis3dh_interrupt_fail = true;
-            }
+
+
+
             break;
         }
         case S_ERROR:
-            // free tcp state
-            if (tcp_state) {
-                printf("Freeing tcp state\n");
-                free(tcp_state);
-            }
+            // TODO: how to close TCP state and free it here?
             gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
             break;
         default:
@@ -311,12 +277,12 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
 }
 
 void updateStateMachine( const enum FSM_State fsm_state ) {
-    //printf("updateStateMachine fsm_state: %s\n", stateToString(fsm_state));
+    printf("updateStateMachine fsm_state: %s\n", stateToString(fsm_state));
 
     switch (fsm_state) {
         case S_INITIALIZE:
         {
-            if (s_initialize_fail)      // case no longer needed
+            if (s_initialize_fail)
             {
                 nextState = S_ERROR;
             }
@@ -328,7 +294,7 @@ void updateStateMachine( const enum FSM_State fsm_state ) {
         }
         case S_SERVER_SETUP:
         {
-            if (s_server_setup_fail) {      // case no longer needed
+            if (s_server_setup_fail) {
                 nextState = S_ERROR;
             }    
             else {
@@ -352,18 +318,12 @@ void updateStateMachine( const enum FSM_State fsm_state ) {
 
             // poll for data on tcp
             cyw43_arch_poll();
+            cyw43_arch_wait_for_work_until(make_timeout_time_ms(1000));
 
             break;
         }
         case S_LIS3DH_INTERRUPT:
-            if (s_lis3dh_interrupt_fail)
-            {
-                nextState = S_ERROR;
-            }
-            else
-            {
-                nextState = S_LOOP;
-            }
+            nextState = S_LOOP;
             break;
         case S_ERROR:
             break;
@@ -398,7 +358,7 @@ void uponExit( const enum FSM_State fsm_state ) {
 
 }
 
-
+// TODO: update this
 const char *stateToString ( const enum FSM_State fsm_state ) {
     const char *stateStr;     // this is a string literal
 
@@ -505,16 +465,16 @@ void gpio_callback(uint gpio, uint32_t events) {
 }
 
 static TCP_SERVER_T* tcp_server_init(void) {
-    TCP_SERVER_T *tcp_state = calloc(1, sizeof(TCP_SERVER_T));
-    if (!tcp_state) {
-        printf("failed to allocate tcp_state\n");
+    TCP_SERVER_T *state = calloc(1, sizeof(TCP_SERVER_T));
+    if (!state) {
+        printf("failed to allocate state\n");
         return NULL;
     }
-    return tcp_state;
+    return state;
 }
 
 static bool tcp_server_open(void *arg) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     printf("Starting server at %s on port %u\n", ip4addr_ntoa(netif_ip4_addr(netif_list)), TCP_PORT);
 
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
@@ -529,8 +489,8 @@ static bool tcp_server_open(void *arg) {
         return false;
     }
 
-    tcp_state->server_pcb = tcp_listen_with_backlog(pcb, 1);
-    if (!tcp_state->server_pcb) {
+    state->server_pcb = tcp_listen_with_backlog(pcb, 1);
+    if (!state->server_pcb) {
         printf("failed to listen\n");
         if (pcb) {
             tcp_close(pcb);
@@ -538,15 +498,16 @@ static bool tcp_server_open(void *arg) {
         return false;
     }
 
-    tcp_arg(tcp_state->server_pcb, tcp_state);
-    tcp_accept(tcp_state->server_pcb, tcp_server_accept);
+    tcp_arg(state->server_pcb, state);
+    // TODO: handle error values returned from accept
+    tcp_accept(state->server_pcb, tcp_server_accept);
 
     return true;
 }
 
-
+// TODO: where does the failure to accept error go? How to propogate this to go to the error state?
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     if (err != ERR_OK || client_pcb == NULL) {
         printf("Failure in accept\n");
         //tcp_server_result(arg, err);
@@ -554,10 +515,10 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err)
     }
 
     printf("Client connected\n");
-    tcp_state->client_pcb = client_pcb;
+    state->client_pcb = client_pcb;
 
     // register callback functions
-    tcp_arg(client_pcb, tcp_state);
+    tcp_arg(client_pcb, state);
     tcp_sent(client_pcb, tcp_server_sent);
     tcp_recv(client_pcb, tcp_server_recv);
     tcp_poll(client_pcb, tcp_server_poll, POLL_TIME_S * 2);
@@ -579,26 +540,26 @@ static err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb) {
 }
 
 static err_t tcp_server_close(void *arg) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     err_t err = ERR_OK;
-    if (tcp_state->client_pcb != NULL) {
-        tcp_arg(tcp_state->client_pcb, NULL);
-        tcp_poll(tcp_state->client_pcb, NULL, 0);
-        tcp_sent(tcp_state->client_pcb, NULL);
-        tcp_recv(tcp_state->client_pcb, NULL);
-        tcp_err(tcp_state->client_pcb, NULL);
-        err = tcp_close(tcp_state->client_pcb);
+    if (state->client_pcb != NULL) {
+        tcp_arg(state->client_pcb, NULL);
+        tcp_poll(state->client_pcb, NULL, 0);
+        tcp_sent(state->client_pcb, NULL);
+        tcp_recv(state->client_pcb, NULL);
+        tcp_err(state->client_pcb, NULL);
+        err = tcp_close(state->client_pcb);
         if (err != ERR_OK) {
             printf("close failed %d, calling abort\n", err);
-            tcp_abort(tcp_state->client_pcb);
+            tcp_abort(state->client_pcb);
             err = ERR_ABRT;
         }
-        tcp_state->client_pcb = NULL;
+        state->client_pcb = NULL;
     }
-    if (tcp_state->server_pcb) {
-        tcp_arg(tcp_state->server_pcb, NULL);
-        tcp_close(tcp_state->server_pcb);
-        tcp_state->server_pcb = NULL;
+    if (state->server_pcb) {
+        tcp_arg(state->server_pcb, NULL);
+        tcp_close(state->server_pcb);
+        state->server_pcb = NULL;
     }
     return err;
 }
@@ -606,7 +567,7 @@ static err_t tcp_server_close(void *arg) {
 // called automatically when data is received???
 // TODO how to handle a closed connection
 err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     if (!p) {
         // return tcp_server_result(arg, -1);
         printf("Client closed connection\n");
@@ -617,47 +578,45 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     if (p->tot_len > 0) {
         printf("tcp_server_recv %d err %d\n", p->tot_len, err);
 
-        tcp_state->recv_len = pbuf_copy_partial(p, tcp_state->recv_buffer, p->tot_len, 0);
+        state->recv_len = pbuf_copy_partial(p, state->recv_buffer, p->tot_len, 0);
         tcp_recved(tpcb, p->tot_len);
     }
     pbuf_free(p);
 
-    return handle_recved_msg(tcp_state);
+    return handle_recved_msg(state);
 }
 
 static err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     printf("tcp_server_sent %u\n", len);
-    tcp_state->sent_len = len;
+    state->sent_len = len;
     return ERR_OK;
 }
 
 err_t handle_recved_msg(void *arg) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T *)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T *)arg;
     data_requested = false;     
 
     // Determine response to recieved message
     // Note: strcmp = 0 if they strings equal
-    if ( !strncmp(Q_IDN, tcp_state->recv_buffer, strlen(Q_IDN)) ) {    
+    if ( !strncmp(Q_IDN, state->recv_buffer, strlen(Q_IDN)) ) {    
         printf("Recieved IDN?\n");
-        memset(tcp_state->send_buffer,0, BUF_SIZE);     // clear send buffer
+        memset(state->send_buffer,0, BUF_SIZE);     // clear send buffer
         char *response = "pico w";
-        strncpy(tcp_state->send_buffer, response, strlen(response));
-        tcp_state->send_len = strlen(response);
-        return tcp_server_send_data(arg, tcp_state->client_pcb);
+        strncpy(state->send_buffer, response, strlen(response));
+        state->send_len = strlen(response);
+        return tcp_server_send_data(arg, state->client_pcb);
     } 
-    else if ( !strncmp(Q_DATA, tcp_state->recv_buffer, strlen(Q_DATA)) ) {
-        memset(tcp_state->send_data_buffer, 0, BUF_SIZE);
+    else if ( !strncmp(Q_DATA, state->recv_buffer, strlen(Q_DATA)) ) {
+        memset(state->send_data_buffer, 0, BUF_SIZE);
         data_requested = true;
         
         // hardcode to capture BUF_SIZE of z data for now
         // todo: accept axis and amount request from client
-        //uint16_t requested_count = BUF_SIZE;
-        uint16_t requested_count = 10;
-        uint16_t requested_byte_count = sizeof(float) * requested_count;
-        lis3dh_data_capture(tcp_state, requested_count, Z_Axis);
-        tcp_state->send_len = requested_byte_count;
-        return tcp_server_send_data(arg, tcp_state->client_pcb);
+        uint16_t requested_count = BUF_SIZE;
+        lis3dh_data_capture(state, requested_count, Z_Axis);
+        state->send_len = requested_count;
+        return tcp_server_send_data(arg, state->client_pcb);
     }
     else {
         printf("Unknown message received\n");
@@ -668,20 +627,20 @@ err_t handle_recved_msg(void *arg) {
 
 err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
 {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
 
-    tcp_state->sent_len = 0;
-    printf("Writing %ld bytes to client\n", tcp_state->send_len);
+    state->sent_len = 0;
+    printf("Writing %ld bytes to client\n", state->send_len);
 
     cyw43_arch_lwip_check();
 
     // Two types of transmission, float and char
     err_t err = ERR_OK;
     if ( data_requested ) {
-        err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);        
+        err = tcp_write(tpcb, state->send_data_buffer, state->send_len, TCP_WRITE_FLAG_COPY);        
         data_requested = false;     // reset flag
     } else {
-        err = tcp_write(tpcb, tcp_state->send_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
+        err = tcp_write(tpcb, state->send_buffer, state->send_len, TCP_WRITE_FLAG_COPY);
     }
     if (err != ERR_OK) {
         printf("Failed to write data %d\n", err);
@@ -696,7 +655,7 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
  *          axis:   selected axis (1 = x, 2 = y, 3 = z)
  */
 void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     
     printf("lis3dh_data_capture fn \n");
 
@@ -704,23 +663,21 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
         case X_Axis:     // X axis
         {
             for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x28, tcp_state->send_data_buffer+i, true);
+                lis3dh_read_data(0x28, state->send_data_buffer+i, true);
             }
             break;
         }
         case Y_Axis:     // Y axis
         {
             for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x2A, tcp_state->send_data_buffer+i, true);
+                lis3dh_read_data(0x2A, state->send_data_buffer+i, true);
             }
             break;
         }
         case Z_Axis:     // Z axis
         {
             for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x2C, tcp_state->send_data_buffer+i, true);
-                //lis3dh_read_data(0x2C, tcp_state->struct_data.data +i, true);
-                printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer+i) );
+                lis3dh_read_data(0x2C, state->send_data_buffer+i, true);
             }
             break;
         }
