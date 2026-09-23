@@ -13,6 +13,7 @@
 #include "include/wifi_info.h"
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
+#include <time.h>
 
 /**********************************
  *  FSM STATES
@@ -65,13 +66,6 @@ typedef struct TCP_SERVER_T_ {
     int recv_len;
 } TCP_SERVER_T;
 
-struct data_msg {
-    float data;
-};
-
-/* typedef struct DATA_MSG_T {
-    float data;
-}vDATA_MSG_T; */
 
 /*******************
  *  LIS3DH SETTINGS
@@ -209,6 +203,14 @@ int main()
         free(tcp_state);
         return -1;
     }
+
+    absolute_time_t abstime = get_absolute_time();  
+    uint64_t since_boot_us = to_us_since_boot(abstime);
+    char fmt_abstime[20];
+    //strftime(fmt_abstime, sizeof(fmt_abstime), "%Y-%m-%d %H:%M:%S", &abstime);
+    printf("time: %lld\n", abstime);
+    //printf("time: %s\n", fmt_abstime);
+    printf("us since boot: %lld\n", since_boot_us);
 
     currentState = nextState = S_INITIALIZE;
 
@@ -647,7 +649,7 @@ err_t handle_recved_msg(void *arg) {
         return tcp_server_send_data(arg, tcp_state->client_pcb);
     } 
     else if ( !strncmp(Q_DATA, tcp_state->recv_buffer, strlen(Q_DATA)) ) {
-        memset(tcp_state->send_data_buffer, 0, BUF_SIZE);
+        memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
         data_requested = true;
         
         // hardcode to capture BUF_SIZE of z data for now
@@ -699,6 +701,7 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
     
     printf("lis3dh_data_capture fn \n");
+    printf("sizeof(float) = %zu\n", sizeof(float));
 
     switch (axis) {
         case X_Axis:     // X axis
@@ -717,10 +720,18 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
         }
         case Z_Axis:     // Z axis
         {
+            absolute_time_t daq_start = get_absolute_time();
+            uint64_t daq_start_us = to_us_since_boot(daq_start);
+            uint64_t sample_times_us[n];
             for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x2C, tcp_state->send_data_buffer+i, true);
-                //lis3dh_read_data(0x2C, tcp_state->struct_data.data +i, true);
-                printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer+i) );
+                lis3dh_read_data(0x2C, tcp_state->send_data_buffer + i*sizeof(float), true);
+                sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
+                //printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
+                //sleep_ms(100);
+            }
+            for (int i = 0; i < n; i++) {
+                printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
+                printf("Sample time in us: %lld\n", sample_times_us[i]);
             }
             break;
         }
