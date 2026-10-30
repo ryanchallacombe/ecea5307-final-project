@@ -15,6 +15,13 @@
 #include "lwip/tcp.h"
 #include <time.h>
 
+/**
+ * Todos:
+ * figure out lis3dh settings for interrupt. consider using a different axis
+ *      reference updated settings in "C:\Users\ryanc\Documents\pico_projects\pico_w_motion_detector\main.c" from 9/29 updates
+ * add time array to tcp structure to transmit during send data function
+ */
+
 /**********************************
  *  FSM STATES
 **********************************/
@@ -545,7 +552,6 @@ static bool tcp_server_open(void *arg) {
 
     return true;
 }
-
 
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
