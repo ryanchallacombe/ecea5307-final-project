@@ -10,19 +10,13 @@ if [ $# -lt 2 ]; then
 	echo "The order of the arguments should be:"
 	echo "	1. The message string to send (in double quotes)"
     echo "	2. The phone number to send the message to (no dashes)"	
-	echo $1
-	echo $2
 	exit 1
 fi
 
 MSG=$1
-#MSG="Hello World!!!!!!!"
-
 PHONE=$2
 
 APIKEY=$(cat /home/ryan/projects/ecea5307-final-project/textbelt/text_belt_api_key.txt)
-# echo $APIKEY
-
 
 curl -X POST https://textbelt.com/text \
      --data-urlencode phone=$PHONE \
