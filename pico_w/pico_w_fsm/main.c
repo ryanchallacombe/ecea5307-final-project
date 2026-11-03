@@ -88,41 +88,30 @@ const int ADDRESS = 0x18;
 
 // control reg settings
 const uint8_t CTRL_REG_1 = 0x20;    
-// const uint8_t SET_CTRL_REG_1 = 0x97;     // enable 3 axes, high res / nomal power mode, ref table 29-31, 10
-// const uint8_t SET_CTRL_REG_1 = 0x27;        // enable 3 axes, high res/normal power mode/10Hz, ref table 29-31, 10
-const uint8_t SET_CTRL_REG_1 = 0x77;        // enable 3 axes, high res/normal power mode/400Hz, ref table 29-31, 10
+const uint8_t SET_CTRL_REG_1 = 0x97;     // enable 3 axes, high res / nomal power mode, ref table 29-31, 10
 
+// full scale setting
 const uint8_t CTRL_REG_4 = 0x23;
-//const uint8_t SET_CTRL_REG_4 = 0x80;    // block data update enabled, +/-2g FS, ref table 37-38
-const uint8_t SET_CTRL_REG_4 = 0x00;        // +/-2g FS
-// const uint8_t SET_CTRL_REG_4 = 0x16;    // +/-4g FS
+const uint8_t SET_CTRL_REG_4 = 0x16;    // +/-4g FS
 
 // interrupt settings
 const uint8_t CTRL_REG_3 = 0x22;        // interrupt control register
-const uint8_t SET_CTRL_REG_3 = 0x3C;    // enable interrupt when IA (interrupt active) + others...
+const uint8_t SET_CTRL_REG_3 = 0x40;    // enable interrupt when IA (interrupt active)
 
 // interrupt settings
 const uint8_t CTRL_REG_5 = 0x24;        // interrupt control register
 const uint8_t SET_CTRL_REG_5 = 0x08;    // latch interrupt 1
 
-// Don't believe we need this one
-//const uint8_t REFERENCE = 0x26;     // reference value for interrupt generation
-
 // INT1_CFG = 0x30, INT1_SRC = 0x31, INT1_THS = 0x32, INT1_DURATION = 0x33
 const uint8_t INT1_CFG = 0x30;
-//const uint8_t SET_INT1_CFG = 0x3F;    // Enable interrupt on all axes, ref table 53
-//const uint8_t SET_INT1_CFG = 0x6A;      // Enable interrupt on HIGH threshold on all axes, ref table 53
 const uint8_t SET_INT1_CFG = 0x60;      // Enable interrupt on HIGH threshold on Z-axis, ref table 53
 
 const uint8_t INT1_SRC = 0x31;
-
 const uint8_t INT1_THS = 0x32;        
-//const uint8_t SET_INT1_THS = 0x3F;    // 63 LSBs, ref table 59
-//const uint8_t SET_INT1_THS = 0x50;      // 80 LSBs, ref table 59
-const uint8_t SET_INT1_THS = 0x6E;      // 110 LSBs, ref table 59
+const uint8_t SET_INT1_THS = 0x40;      // set to 64 LSBs (2g for +/-4g fs), ref table 59
 
 const uint8_t INT1_DURATION = 0x33;
-const uint8_t SET_INT1_DURATION = 0x01;  // 1 decimal, ref table 61
+const uint8_t SET_INT1_DURATION = 0x00;  // 1 decimal, ref table 61
 
 float x_accel, y_accel, z_accel;
 
@@ -240,9 +229,17 @@ int main()
     } // while
 }   // main
 
-/**********************************
- *  FUNCTION DEFINITIONS
-**********************************/
+/******************************************** 
+ * ******************************************
+ * 
+ *      FUNCTION DEFINITIONS
+
+ * ******************************************
+*********************************************/
+
+/******************************************** 
+ *      FSM FUNCTIONS
+*********************************************/
 
 void uponEnter( const enum FSM_State fsm_state, void *arg ) {
     printf("Entering fsm_state: %s\n", stateToString(fsm_state));
@@ -287,6 +284,10 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
             break;
         case S_LIS3DH_INTERRUPT:
         {
+            // disable interrupt and reset flag
+            gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
+            lis3dh_int_triggered = false;
+
             // read where the interrupt came from and get some info
             uint8_t int1_src = 0;
             i2c_write_blocking(i2c_default, ADDRESS, &int1_src_addr, 1, true);
@@ -295,7 +296,7 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
 
             // tell the client about the interrupt
             memset(tcp_state->send_buffer, 0, BUF_SIZE); // clear send buffer
-            char *msg = "interrupt occured";
+            char *msg = "motion sensor sent interrupt";
             strncpy(tcp_state->send_buffer, msg, strlen(msg));
             tcp_state->send_len = strlen(msg);
             g_err = tcp_server_send_data(arg, tcp_state->client_pcb);
@@ -303,6 +304,7 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
                 printf("error: failed to notify client of interrupt\n");
                 s_lis3dh_interrupt_fail = true;
             }
+
             break;
         }
         case S_ERROR:
@@ -355,12 +357,12 @@ void updateStateMachine( const enum FSM_State fsm_state ) {
         } 
         case S_LOOP:
         {
+            // poll for data on tcp
+            cyw43_arch_poll();
+
             if ( lis3dh_int_triggered ) {
                 nextState = S_LIS3DH_INTERRUPT;
             }
-
-            // poll for data on tcp
-            cyw43_arch_poll();
 
             break;
         }
@@ -407,9 +409,8 @@ void uponExit( const enum FSM_State fsm_state ) {
 
 }
 
-
 const char *stateToString ( const enum FSM_State fsm_state ) {
-    const char *stateStr;     // this is a string literal
+    const char *stateStr; 
 
     switch (fsm_state) {
         case S_INITIALIZE:
@@ -436,6 +437,9 @@ const char *stateToString ( const enum FSM_State fsm_state ) {
     return stateStr;
 }
 
+/******************************************** 
+ *      LIS3DH FUNCTIONS
+*********************************************/
 void lis3dh_init() {
     uint8_t buf[2];
 
@@ -477,9 +481,21 @@ void lis3dh_init() {
 }
 
 void lis3dh_calc_value(uint16_t raw_value, float *final_value, bool isAccel) {
-    // Convert with respect to the value being temperature or acceleration reading 
     float scaling;
-    float senstivity = 0.004f; // g per unit
+    /* Sensitivity
+        ADC is 10 bits, so 1024 steps over the entire positive and negative g range
+        Sensitivity = FS g value/512
+        0.004g for +/-2g FS
+        0.0078g for +/-4g FS
+        */
+    float senstivity;
+    if (SET_CTRL_REG_4 == 0x00) {
+        senstivity = 0.004f; // g per unit
+    } else if (SET_CTRL_REG_4 == 0x16) {    
+        senstivity = 0.0078f; // g per unit
+    } else {
+        senstivity = 1.0f; //...some insane value to tip us off that we forgot to change this section of code
+    }
 
     if (isAccel == true) {
         scaling = 64 / senstivity;
@@ -508,9 +524,95 @@ void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel) {
     lis3dh_calc_value(raw_accel, final_value, IsAccel);
 }
 
+/******************************************** 
+ * lis3dh_data_capture()
+ * 
+ * inputs:  arg:    pointer to TCP state structure
+ *          n:      size of the buffer
+ *          axis:   selected axis (1 = x, 2 = y, 3 = z)
+*********************************************/
+void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
+    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
+    
+    printf("lis3dh_data_capture fn \n");
+    printf("sizeof(float) = %zu\n", sizeof(float));
+
+    switch (axis) {
+        case X_Axis:     // X axis
+        {
+            for (int i = 0; i < n; i++) {
+                lis3dh_read_data(0x28, tcp_state->send_data_buffer+i, true);
+            }
+            break;
+        }
+        case Y_Axis:     // Y axis
+        {
+            for (int i = 0; i < n; i++) {
+                lis3dh_read_data(0x2A, tcp_state->send_data_buffer+i, true);
+            }
+            break;
+        }
+        case Z_Axis:     // Z axis
+        {
+            absolute_time_t daq_start = get_absolute_time();
+            uint64_t daq_start_us = to_us_since_boot(daq_start);
+            uint64_t sample_times_us[n];
+            for (int i = 0; i < n; i++) {
+                lis3dh_read_data(0x2C, tcp_state->send_data_buffer + i*sizeof(float), true);
+                sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
+                //printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
+                //sleep_ms(100);
+            }
+            for (int i = 0; i < n; i++) {
+                printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
+                printf("Sample time in us: %lld\n", sample_times_us[i]);
+            }
+            break;
+        }
+    }
+}
+
 void gpio_callback(uint gpio, uint32_t events) {
     lis3dh_int_triggered = true;
     return;
+}
+
+/******************************************** 
+ *      TCP FUNCTIONS
+*********************************************/
+err_t handle_recved_msg(void *arg) {
+    TCP_SERVER_T *tcp_state = (TCP_SERVER_T *)arg;
+    data_requested = false;     
+
+    // Determine response to recieved message
+    // Note: strcmp = 0 if they strings equal
+    if ( !strncmp(Q_IDN, tcp_state->recv_buffer, strlen(Q_IDN)) ) {    
+        printf("Recieved IDN?\n");
+        memset(tcp_state->send_buffer,0, BUF_SIZE);     // clear send buffer
+        char *response = "pico w";
+        strncpy(tcp_state->send_buffer, response, strlen(response));
+        tcp_state->send_len = strlen(response);
+        return tcp_server_send_data(arg, tcp_state->client_pcb);
+    } 
+    else if ( !strncmp(Q_DATA, tcp_state->recv_buffer, strlen(Q_DATA)) ) {
+        memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
+        data_requested = true;
+        
+        // hardcode to capture BUF_SIZE of z data for now
+        // todo: accept axis and amount request from client
+        // consider using Q_DATA:n, where n is the requested number of samples
+        //uint16_t requested_count = BUF_SIZE;
+        uint16_t requested_count = 10;
+        uint16_t requested_byte_count = sizeof(float) * requested_count;
+        lis3dh_data_capture(tcp_state, requested_count, Z_Axis);
+        tcp_state->send_len = requested_byte_count;
+        return tcp_server_send_data(arg, tcp_state->client_pcb);
+    }
+    else {
+        printf("Unknown message received\n");
+    }
+
+    return ERR_OK;
 }
 
 static TCP_SERVER_T* tcp_server_init(void) {
@@ -640,40 +742,6 @@ static err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     return ERR_OK;
 }
 
-err_t handle_recved_msg(void *arg) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T *)arg;
-    data_requested = false;     
-
-    // Determine response to recieved message
-    // Note: strcmp = 0 if they strings equal
-    if ( !strncmp(Q_IDN, tcp_state->recv_buffer, strlen(Q_IDN)) ) {    
-        printf("Recieved IDN?\n");
-        memset(tcp_state->send_buffer,0, BUF_SIZE);     // clear send buffer
-        char *response = "pico w";
-        strncpy(tcp_state->send_buffer, response, strlen(response));
-        tcp_state->send_len = strlen(response);
-        return tcp_server_send_data(arg, tcp_state->client_pcb);
-    } 
-    else if ( !strncmp(Q_DATA, tcp_state->recv_buffer, strlen(Q_DATA)) ) {
-        memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
-        data_requested = true;
-        
-        // hardcode to capture BUF_SIZE of z data for now
-        // todo: accept axis and amount request from client
-        //uint16_t requested_count = BUF_SIZE;
-        uint16_t requested_count = 10;
-        uint16_t requested_byte_count = sizeof(float) * requested_count;
-        lis3dh_data_capture(tcp_state, requested_count, Z_Axis);
-        tcp_state->send_len = requested_byte_count;
-        return tcp_server_send_data(arg, tcp_state->client_pcb);
-    }
-    else {
-        printf("Unknown message received\n");
-    }
-
-    return ERR_OK;
-}
-
 err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
 {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
@@ -696,50 +764,4 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
         return err;
     }
     return err;
-}
-
-/**********************
- * inputs:  arg:    pointer to TCP state structure
- *          n:      size of the buffer
- *          axis:   selected axis (1 = x, 2 = y, 3 = z)
- */
-void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
-    TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
-    
-    printf("lis3dh_data_capture fn \n");
-    printf("sizeof(float) = %zu\n", sizeof(float));
-
-    switch (axis) {
-        case X_Axis:     // X axis
-        {
-            for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x28, tcp_state->send_data_buffer+i, true);
-            }
-            break;
-        }
-        case Y_Axis:     // Y axis
-        {
-            for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x2A, tcp_state->send_data_buffer+i, true);
-            }
-            break;
-        }
-        case Z_Axis:     // Z axis
-        {
-            absolute_time_t daq_start = get_absolute_time();
-            uint64_t daq_start_us = to_us_since_boot(daq_start);
-            uint64_t sample_times_us[n];
-            for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x2C, tcp_state->send_data_buffer + i*sizeof(float), true);
-                sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
-                //printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
-                //sleep_ms(100);
-            }
-            for (int i = 0; i < n; i++) {
-                printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
-                printf("Sample time in us: %lld\n", sample_times_us[i]);
-            }
-            break;
-        }
-    }
 }
