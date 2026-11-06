@@ -507,6 +507,11 @@ void lis3dh_calc_value(uint16_t raw_value, float *final_value, bool isAccel) {
     *final_value = (float) ((int16_t) raw_value) / scaling;
 }
 
+/*********************************
+ * lis3dh_read_data
+ *      calls lis3dh_calc_data to compute the final accel value
+ *      stores final value in final_value
+ */
 void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel) {
     // Read two bytes of data and store in a 16 bit data structure
     uint8_t lsb;
@@ -537,6 +542,12 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
     printf("lis3dh_data_capture fn \n");
     printf("sizeof(float) = %zu\n", sizeof(float));
 
+    // todo: remove unused axes
+    //uint16_t accel_data_raw[n];
+    absolute_time_t daq_start = get_absolute_time();
+    uint64_t daq_start_us = to_us_since_boot(daq_start);
+    uint64_t sample_times_us[n];
+
     switch (axis) {
         case X_Axis:     // X axis
         {
@@ -554,11 +565,12 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
         }
         case Z_Axis:     // Z axis
         {
-            absolute_time_t daq_start = get_absolute_time();
-            uint64_t daq_start_us = to_us_since_boot(daq_start);
-            uint64_t sample_times_us[n];
             for (int i = 0; i < n; i++) {
+
+                //lis3dh_read_data(0x2C, accel_data_raw[i], true);
                 lis3dh_read_data(0x2C, tcp_state->send_data_buffer + i*sizeof(float), true);
+                //lis3dh_calc_value(accel_data_raw[i], tcp_state->send_data_buffer + i*sizeof(float), false);
+                
                 sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
                 //printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
                 //sleep_ms(100);
@@ -598,13 +610,16 @@ err_t handle_recved_msg(void *arg) {
         memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
         data_requested = true;
         
+        // todo: need to be consistent about when buffer(s) is cleared
+
         // hardcode to capture BUF_SIZE of z data for now
         // todo: accept axis and amount request from client
         // consider using Q_DATA:n, where n is the requested number of samples
         //uint16_t requested_count = BUF_SIZE;
-        uint16_t requested_count = 10;
+        uint16_t requested_count = 1;
         uint16_t requested_byte_count = sizeof(float) * requested_count;
         lis3dh_data_capture(tcp_state, requested_count, Z_Axis);
+        // todo: convert data to float here
         tcp_state->send_len = requested_byte_count;
         return tcp_server_send_data(arg, tcp_state->client_pcb);
     }
