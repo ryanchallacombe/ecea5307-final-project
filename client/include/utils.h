@@ -12,8 +12,8 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-
-
+#include <sys/wait.h>
+#include <poll.h>
 
 #ifndef UTILS_H
 #define	UTILS_H
@@ -26,6 +26,7 @@ int writer_func(const char *fpath, const char *buf);
 void signal_handler ( int signal_number );
 char *read_until_term(int fd, const char term, int *rtn_flag);
 ssize_t readLine(int fd, void *buffer, size_t n);
+int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber);
 
 
 #endif

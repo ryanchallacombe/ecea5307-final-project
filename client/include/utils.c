@@ -9,6 +9,7 @@ int writer_func(const char *fpath, const char *buf);
 void signal_handler ( int signal_number );
 char *read_until_term(int fd, const char term, int *rtn_flag);
 ssize_t readLine(int fd, void *buffer, size_t n);
+int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber);
 
 /**********************************
 *   Globals
@@ -16,10 +17,39 @@ ssize_t readLine(int fd, void *buffer, size_t n);
 
 bool caught_signal;
 
-
 /////////////////////////////
 //		Function definitions
 /////////////////////////////
+
+int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber) {
+
+    char *cmd[4];
+    cmd[0] = script_fullpath;
+    cmd[1] = msg;
+    cmd[2] = phonenumber;
+    cmd[3] = NULL;
+
+    pid_t pid;
+    int status; 
+    pid = fork();
+    if (pid == -1) {		                            // fork error
+		perror("****** fork");
+		return 1;
+	} else if (pid == 0) {                              // code executes in child pid
+        if (execv(script_fullpath, cmd) == -1) {		// execv error
+            perror("EXECV error"); 
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    waitpid(pid, &status, 0) ;
+    if (! WIFEXITED(status)) {
+        //printf("Parent: Child terminated abnormally (e.g., crashed or killed by signal).\n");
+        return 1;
+    }
+
+    return 0;
+}
 
 int writer_func(const char *fpath, const char *buf)
 {	
