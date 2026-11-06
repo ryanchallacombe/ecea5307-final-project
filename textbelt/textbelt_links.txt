@@ -1,0 +1,11 @@
+https://docs.textbelt.com/#send-an-sms-using-http-post
+
+curl -X POST https://textbelt.com/text \
+     --data-urlencode phone='5555555555' \
+     --data-urlencode message='Hello world' \
+     -d key=textbelt
+
+https://docs.textbelt.com/#receiving-sms-replies
+
+https://docs.textbelt.com/otp-mobile-verification
+
