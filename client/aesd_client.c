@@ -62,6 +62,7 @@ struct Buffers *buffers = &buf;
 int sock_recv_chars(int fd, struct Buffers *buf);
 int sock_recv_data(int fd, struct Buffers *buf);
 int sock_send_chars(int fd, struct Buffers *buf, char *msg);
+int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count);
 
 /**********************************
 *	Main
@@ -262,7 +263,7 @@ int main(int argc, char *argv[]) {
 		} else {
 
 			// query for data
-			if( ( rtn_val = sock_send_chars(sockfd, buffers, Q_DATA) ) == -1 ) {
+			if( ( rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, 3, 1) ) == -1 ) {
 				goto DONE;
 			}
 
@@ -365,16 +366,79 @@ int sock_recv_data(int fd, struct Buffers *buf) {
  * 				* msg = ptr to message to send
  *
  * 		returns:
- * 				0 	= successful receive
+ * 				0 	= successful send
  * 				-1 	= error in recv 
  */
 int sock_send_chars(int fd, struct Buffers *buf, char *msg) {
 
 	int sockfd = fd;
-	// clear the receive buffer and length
+	// clear the receive buffer
 	memset(buf->send_buffer, 0, SEND_BUF_SIZE);
 	strncpy(buffers->send_buffer, msg, strlen(msg));
 	buf->send_len = sizeof(msg); 
+
+	errno = 0;
+	int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
+	if ( numbytes == -1 ) {
+		printf("error in sock_esnd_chars() in send() call: %s\n", strerror(errno));
+		return -1;
+    }
+
+	return 0;
+}
+
+/***********
+ * sock_send_data_req())
+ * 		inputs: fd = the socket fd
+ * 				*buf = ptr to struct Buffers
+ * 				* msg = ptr to message to send
+ * 				axis = the axis to sample (x=1, y=2, z=3)
+ * 				count = number of samples
+ *
+ * 		returns:
+ * 				0 	= successful send
+ * 				-1 	= error in recv 
+ */
+int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count) {
+
+	int sockfd = fd;
+	// clear the receive buffer
+	memset(buf->send_buffer, 0, SEND_BUF_SIZE);
+
+	// build suffix: <axis>,<count>
+	// Only 1 digit count supported
+	int suf_count = 3;		// Only 1 digit count supported
+	char suf[suf_count];
+	suf[0] = axis + '0';
+	suf[1] = ',';
+	suf[2] = count + '0';
+	printf("Requesting <axis>,<count>: %s\n", suf);
+	
+	/*********
+	 * build full message
+	 * start with msg and add the suffix to it
+	 * suffix is <axis>,<count>
+	 */
+
+	// TODO: strlen() should not be used here, these are not strings
+	int full_msg_count = strlen(msg) + suf_count;
+	printf("full_msg count: %i\n", full_msg_count);
+	char full_msg[full_msg_count];
+	strncpy(full_msg, msg, strlen(msg));
+	//printf("full_msg: %s\n", full_msg);
+	//strncpy(full_msg[strlen(msg)-1], suf, strlen(suf));
+	strncpy(full_msg + strlen(msg), suf, strlen(suf));
+	char str_full_msg[strlen(full_msg + 1)];
+	strncpy(str_full_msg, full_msg, strlen(full_msg));
+	//strncpy(str_full_msg + strlen(full_msg), "\0", 1);
+	str_full_msg[8] = '\0';
+	printf("str_full_msg: %s\n", str_full_msg);
+
+	// build message
+	strncpy(buffers->send_buffer, full_msg, strlen(full_msg));
+
+	// compute length
+	buf->send_len = sizeof(full_msg); 
 
 	errno = 0;
 	int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
