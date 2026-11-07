@@ -20,6 +20,10 @@
  * figure out lis3dh settings for interrupt. consider using a different axis
  *      reference updated settings in "C:\Users\ryanc\Documents\pico_projects\pico_w_motion_detector\main.c" from 9/29 updates
  * add time array to tcp structure to transmit during send data function
+ * 
+ * reset send_len and others everytime memset is done
+ * 
+ *         // todo: need to be consistent about when buffer(s) is cleared
  */
 
 /**********************************
@@ -54,8 +58,20 @@ bool s_server_setup_fail = false;
 bool s_lis3dh_setup_fail = false;
 bool s_lis3dh_interrupt_fail = false;
 
+// Define the queries from the client
 char *Q_IDN = "IDN?";
+/***
+ * Data query format:
+ *  DATA?<axis>,<number of samples (max 99)>
+ *      example: a request for 50 samples of z-axis
+ *          'DATA?3,50'
+ *      axis numbers are: x=1, y=2, z=3
+ * 
+ */
 char *Q_DATA = "DATA?";
+uint8_t q_data_axis_offs = 5;       // zero referenced offset of the axis requested
+uint8_t q_data_count_offs = 7;      // zero referenced offset of the sample count requested
+
 
 bool data_requested = false;     // set in handle_recved_msg() and reset in tcp_send_data()
 err_t g_err = ERR_OK;
@@ -607,19 +623,25 @@ err_t handle_recved_msg(void *arg) {
         return tcp_server_send_data(arg, tcp_state->client_pcb);
     } 
     else if ( !strncmp(Q_DATA, tcp_state->recv_buffer, strlen(Q_DATA)) ) {
-        memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
         data_requested = true;
-        
-        // todo: need to be consistent about when buffer(s) is cleared
 
-        // hardcode to capture BUF_SIZE of z data for now
-        // todo: accept axis and amount request from client
-        // consider using Q_DATA:n, where n is the requested number of samples
-        //uint16_t requested_count = BUF_SIZE;
-        uint16_t requested_count = 1;
+        // determine requested count by pulling it from the query string and converting to an int
+        uint16_t requested_count = tcp_state->recv_buffer[q_data_count_offs] - '0';
+        uint8_t requested_axis = tcp_state->recv_buffer[q_data_axis_offs] - '0';
+
+        // debug
+        printf("data requested. count = %i, axis = %i\n", requested_count, requested_axis);
+
+        // done with the buffer so we can clear it
+        memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
+        
+        /****
+         * loop over requested count
+         * capture 1 sample then send it
+         * repeat until loop count equal requested count
+         */
         uint16_t requested_byte_count = sizeof(float) * requested_count;
-        lis3dh_data_capture(tcp_state, requested_count, Z_Axis);
-        // todo: convert data to float here
+        lis3dh_data_capture(tcp_state, requested_count, requested_axis);
         tcp_state->send_len = requested_byte_count;
         return tcp_server_send_data(arg, tcp_state->client_pcb);
     }
@@ -769,8 +791,12 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
     // Two types of transmission, float and char
     err_t err = ERR_OK;
     if ( data_requested ) {
-        err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);        
+        //err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
         data_requested = false;     // reset flag
+
+        err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
+        err = tcp_write(tpcb, tcp_state->send_data_buffer+sizeof(float), tcp_state->send_len, TCP_WRITE_FLAG_COPY);         
+
     } else {
         err = tcp_write(tpcb, tcp_state->send_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
     }
