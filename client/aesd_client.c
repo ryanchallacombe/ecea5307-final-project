@@ -61,6 +61,7 @@ struct Buffers *buffers = &buf;
 **********************************/
 int sock_recv_chars(int fd, struct Buffers *buf);
 int sock_recv_data(int fd, struct Buffers *buf);
+int sock_send_chars(int fd, struct Buffers *buf, char *msg);
 
 /**********************************
 *	Main
@@ -197,29 +198,11 @@ int main(int argc, char *argv[]) {
 	} */
 
 	/************************* INITIAL COMMS *************************/
-	// Clear global variable buffers
-	//memset(buffers, 0, sizeof(struct Buffers));
 
-	errno = 0;
-	memset(buffers->send_buffer, 0, SEND_BUF_SIZE);
-	strncpy(buffers->send_buffer, Q_IDN, strlen(Q_IDN));
-	if ( send(sockfd, buffers->send_buffer, sizeof(Q_IDN)*sizeof(char)+1, 0) == -1 ) {
-		printf("send() call error: %s\n", strerror(errno));
-		rtn_val = -1;
-		close(sockfd);
+	// query for ID
+	if( ( rtn_val = sock_send_chars(sockfd, buffers, Q_IDN) ) == -1 ) {
 		goto DONE;
 	}
-
-	// todo: need to be consistent about when buffer(s) is cleared
-
-/* 	errno = 0;
-	memset(buffers->recv_buffer, 0, RCV_BUF_SIZE);
-	if ( (numbytes = recv(sockfd, buffers->recv_buffer, RCV_BUF_SIZE-1, 0)) == -1 ) {
-		printf("recv() call error: %s\n", strerror(errno));
-		rtn_val = -1;
-		close(sockfd);
-		goto DONE;
-    } */
 
 	if( ( rtn_val = sock_recv_chars(sockfd, buffers) ) == -1 ) {
 		goto DONE;
@@ -278,36 +261,15 @@ int main(int argc, char *argv[]) {
 			printf("Recieved from server: %s\n", buffers->recv_buffer);
 		} else {
 
-	
-			//printf("poll() timed out\n");
-			
-
-
-			errno = 0;
-			memset(buffers->send_buffer, 0, SEND_BUF_SIZE);
-			strncpy(buffers->send_buffer, Q_DATA, strlen(Q_DATA));
-			if ( send(sockfd, buffers->send_buffer, sizeof(Q_DATA)*sizeof(char)+1, 0) == -1 ) {
-				printf("send() call error: %s\n", strerror(errno));
-				rtn_val = -1;
-				close(sockfd);
+			// query for data
+			if( ( rtn_val = sock_send_chars(sockfd, buffers, Q_DATA) ) == -1 ) {
 				goto DONE;
 			}
 
-			// query for data
+			// receive data
 			if( ( rtn_val = sock_recv_data(sockfd, buffers) ) == -1 ) {
 				goto DONE;
 			}
-
-/* 			errno = 0; 
-			memset(buffers->data_buffer, 0, sizeof(float) * DATA_BUF_SIZE);
-			// is the buffer length of DATA_BUF_SIZE correct?
-			// should it be DATA_BUF_SIZE * sizeof(float) ?
-			if ( (numbytes = recv(sockfd, buffers->data_buffer, DATA_BUF_SIZE, 0)) == -1 ) {
-				printf("recv() call error: %s\n", strerror(errno));
-				rtn_val = -1;
-				close(sockfd);
-				goto DONE;
-			} */
 
 			printf("Recieved from server: %.4f\n", buffers->data_buffer[0]);
 			
@@ -383,6 +345,7 @@ int sock_recv_data(int fd, struct Buffers *buf) {
 	// clear the receive buffer and length
 	memset(buf->data_buffer, 0, DATA_BUF_SIZE*sizeof(float));
 	buf->data_count = 0; 
+	buf->data_bytes = 0; 
 
 	errno = 0;
 	int numbytes = recv(sockfd, buf->data_buffer, DATA_BUF_SIZE, 0);
@@ -392,5 +355,33 @@ int sock_recv_data(int fd, struct Buffers *buf) {
     }
 
 	buf->data_bytes = numbytes;	
+	return 0;
+}
+
+/***********
+ * sock_send_chars())
+ * 		inputs: fd = the socket fd
+ * 				*buf = ptr to struct Buffers
+ * 				* msg = ptr to message to send
+ *
+ * 		returns:
+ * 				0 	= successful receive
+ * 				-1 	= error in recv 
+ */
+int sock_send_chars(int fd, struct Buffers *buf, char *msg) {
+
+	int sockfd = fd;
+	// clear the receive buffer and length
+	memset(buf->send_buffer, 0, SEND_BUF_SIZE);
+	strncpy(buffers->send_buffer, msg, strlen(msg));
+	buf->send_len = sizeof(msg); 
+
+	errno = 0;
+	int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
+	if ( numbytes == -1 ) {
+		printf("error in sock_esnd_chars() in send() call: %s\n", strerror(errno));
+		return -1;
+    }
+
 	return 0;
 }
