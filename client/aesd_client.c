@@ -14,56 +14,62 @@
 #include "include/utils.h"
 
 /**********************************
-*	Defines
-**********************************/
+ *	Defines
+ **********************************/
 
-//#define MAXDATASIZE		1024						// max number of bytes
-#define RECVFILE		"/var/tmp/aesd_client_data"	// file for storing received messages
-#define TCP_PORT 		"4242"
-#define RCV_BUF_SIZE  	1024
-#define SEND_BUF_SIZE  	512
-#define DATA_BUF_SIZE  	256
+// #define MAXDATASIZE		1024						// max number of bytes
+#define RECVFILE "/var/tmp/aesd_client_data" // file for storing received messages
+#define TCP_PORT "4242"
+#define RCV_BUF_SIZE 1024
+#define SEND_BUF_SIZE 512
+#define DATA_BUF_SIZE 256
+#define BASELINE_REQ_COUNT 100
+#define REQ_COUNT_10 10
 
 /**********************************
-*	Globals
-**********************************/
+ *	Globals
+ **********************************/
 
-extern bool caught_signal;			// defined in utils.c
+extern bool caught_signal; // defined in utils.c
 char *Q_IDN = "IDN?";
-char *R_IDN = "pico w";				// expected response to query
+char *R_IDN = "pico w"; // expected response to query
 char *Q_DATA = "DATA?";
 /* char recv_buffer[RCV_BUF_SIZE];
 char send_buffer[SEND_BUF_SIZE];
 float data_buffer[DATA_BUF_SIZE]; */
-size_t numbytes; 
+size_t numbytes;
+int g_passive_mon_sleep_secs = 20;
+int g_active_mon_sleep_secs = 10;
 
-struct Buffers{
+struct Buffers
+{
 	char recv_buffer[RCV_BUF_SIZE];
 	char send_buffer[SEND_BUF_SIZE];
 	float data_buffer[DATA_BUF_SIZE];
 
 	/* 	lengths are updated when data is put into the respective buffer
-		note that recv and send lengths are the number of bytes because 
+		note that recv and send lengths are the number of bytes because
 		their data type is char which is 1 byte
-		however, the data number is a count because a float is generally 4 bytes 
+		however, the data number is a count because a float is generally 4 bytes
 	*/
-	int recv_len;		
+	int recv_len;
 	int send_len;
 	int data_count;
-	int data_bytes;			
+	int data_bytes;
 };
 
 struct Buffers buf = {0};
 struct Buffers *buffers = &buf;
 
-struct AxisStats{
+struct AxisStats
+{
 	float mean;
 	float stddev;
 };
 
 /**********************************
-*	Function protos
-**********************************/
+ *	Function protos
+ **********************************/
 int sock_recv_chars(int fd, struct Buffers *buf);
 int sock_recv_data(int fd, struct Buffers *buf);
 int sock_send_chars(int fd, struct Buffers *buf, char *msg);
@@ -71,10 +77,10 @@ int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int cou
 void calc_stats(float *buf, int count, struct AxisStats *ax_stats);
 
 /**********************************
-*	Main
-**********************************/
-int main(int argc, char *argv[]) {
-
+ *	Main
+ **********************************/
+int main(int argc, char *argv[])
+{
 
 	/* Setup syslog */
 	openlog(NULL, 0, LOG_USER);
@@ -86,57 +92,61 @@ int main(int argc, char *argv[]) {
 	const char *prog_name = argv[0];
 	syslog(LOG_DEBUG, "***** Starting program: %s\n", prog_name);
 
-
 	/************************* Signal handler setup *************************/
-	caught_signal = false;			// Signal handler flag
-	struct sigaction new_action;	
+	caught_signal = false; // Signal handler flag
+	struct sigaction new_action;
 
-    memset( &new_action, 0, sizeof(struct sigaction) );
-    new_action.sa_handler = signal_handler;
+	memset(&new_action, 0, sizeof(struct sigaction));
+	new_action.sa_handler = signal_handler;
 
-    if( sigaction(SIGTERM, &new_action, NULL) != 0 ) {
-        printf("Error %d (%s) registering for SIGTERM",errno,strerror(errno));
-        rtn_val = -1;
-        goto DONE;
-    }
-    if( sigaction(SIGINT, &new_action, NULL) ) {
-        printf("Error %d (%s) registering for SIGINT",errno,strerror(errno));
-        rtn_val = -1;
-        goto DONE;
-    }
+	if (sigaction(SIGTERM, &new_action, NULL) != 0)
+	{
+		printf("Error %d (%s) registering for SIGTERM", errno, strerror(errno));
+		rtn_val = -1;
+		goto DONE;
+	}
+	if (sigaction(SIGINT, &new_action, NULL))
+	{
+		printf("Error %d (%s) registering for SIGINT", errno, strerror(errno));
+		rtn_val = -1;
+		goto DONE;
+	}
 
-    /************************* Remove write file if it exists *************************/
+	/************************* Remove write file if it exists *************************/
 	char *wr_file_path = RECVFILE;
 	errno = 0;
 	FILE *fp;
-	if ( (fp = fopen(wr_file_path, "r")) != NULL ) {
+	if ((fp = fopen(wr_file_path, "r")) != NULL)
+	{
 		printf("Removing file: %s\n", wr_file_path);
 		fclose(fp);
-		if ( (remove(wr_file_path)) == -1)
+		if ((remove(wr_file_path)) == -1)
 			perror("remove");
 	}
-	
+
 	/************************* Socket *************************/
 	// setup
-	//const char *port = "4242";
+	// const char *port = "4242";
 	struct addrinfo hints;
-	struct addrinfo *servinfo;				// will point to the linked list of results
+	struct addrinfo *servinfo; // will point to the linked list of results
 
 	// hints setup
-	memset(&hints, 0, sizeof(hints));		// make sure that the struct is cleared
-	hints.ai_family = AF_UNSPEC;			// don't care if ipv4 or ipv6
-	hints.ai_socktype = SOCK_STREAM; 		// TCP stream sockets
-	hints.ai_flags = AI_PASSIVE;     		// fill in my localhost IP for me
+	memset(&hints, 0, sizeof(hints)); // make sure that the struct is cleared
+	hints.ai_family = AF_UNSPEC;	  // don't care if ipv4 or ipv6
+	hints.ai_socktype = SOCK_STREAM;  // TCP stream sockets
+	hints.ai_flags = AI_PASSIVE;	  // fill in my localhost IP for me
 
-    if (argc != 2) {
-        printf("usage: aesd_client <server_ip>\n");
+	if (argc != 2)
+	{
+		printf("usage: aesd_client <server_ip>\n");
 		rtn_val = -1;
 		goto DONE;
-    }
+	}
 
 	// getaddrinfo call
 	int ret;
-	if ( (ret = getaddrinfo(argv[1], TCP_PORT, &hints, &servinfo)) != 0 ) {
+	if ((ret = getaddrinfo(argv[1], TCP_PORT, &hints, &servinfo)) != 0)
+	{
 		// log error
 		printf("getaddrinfo() call error: %s\n", gai_strerror(ret));
 		rtn_val = -1;
@@ -146,7 +156,8 @@ int main(int argc, char *argv[]) {
 	// socket call
 	int sockfd;
 	errno = 0;
-	if ( (sockfd = socket(servinfo->ai_family, servinfo-> ai_socktype, servinfo->ai_protocol)) == -1 ) {
+	if ((sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol)) == -1)
+	{
 		printf("socket() call error: %s\n", strerror(errno));
 		rtn_val = -1;
 		goto DONE;
@@ -156,62 +167,67 @@ int main(int argc, char *argv[]) {
 	// set SO_REUSEADDR on a socket to true (1):
 	int optval = 1;
 	socklen_t optlen;
-	if ( setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) != 0) {
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) != 0)
+	{
 		perror("setsockopt");
 	}
 
 	getsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, &optlen);
-	if (optval != 0) {
-    	printf("SO_REUSEADDR enabled on sockfd\n");
+	if (optval != 0)
+	{
+		printf("SO_REUSEADDR enabled on sockfd\n");
 	}
 
 	// connect() call
 	errno = 0;
-	if ( (connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) == -1 ) {
+	if ((connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+	{
 		printf("connect()) call error: %s\n", strerror(errno));
 		rtn_val = -1;
 		close(sockfd);
 		goto DONE;
-	} 
+	}
 
 	// Print address of connected server
-	char ipstr[INET_ADDRSTRLEN];  				// space to hold the IPv4 string
+	char ipstr[INET_ADDRSTRLEN]; // space to hold the IPv4 string
 	inet_ntop(servinfo->ai_family, (struct sockaddr_in *)servinfo->ai_addr, ipstr, INET_ADDRSTRLEN);
 	syslog(LOG_DEBUG, "Client connected to %s\n", ipstr);
 	printf("Client connected to %s\n", ipstr);
 
 	// TODO: support daemon mode or delete
 	/********** Daemon mode **********/
-	
+
 	// Daemon mode is invoked by argument 1 as '-d' when this application is invoked from command line
-/* 	pid_t pid;
-	if (argc > 1) {			// check to ensure we got a command line argument
-		if ( !strncmp("-d", argv[1], 2) ) {
-			printf("Daemon mode invoked.\n");
+	/* 	pid_t pid;
+		if (argc > 1) {			// check to ensure we got a command line argument
+			if ( !strncmp("-d", argv[1], 2) ) {
+				printf("Daemon mode invoked.\n");
 
-			pid = fork();
-			if ( pid == -1) {			// fork error
-				perror("fork");
-				rtn_val = -1;
-				goto DONE;
-			} else if ( pid != 0 ) {	// pid = 0 is child pid
+				pid = fork();
+				if ( pid == -1) {			// fork error
+					perror("fork");
+					rtn_val = -1;
+					goto DONE;
+				} else if ( pid != 0 ) {	// pid = 0 is child pid
 
-				// exit parent process
-				printf("Exiting parent process\n");
-				rtn_val = 0;
-				goto DONE;
+					// exit parent process
+					printf("Exiting parent process\n");
+					rtn_val = 0;
+					goto DONE;
+				}
 			}
-		}
-	} */
+		} */
 
 	/************************* INITIAL COMMS *************************/
 
 	// query for ID
-	if( ( rtn_val = sock_send_chars(sockfd, buffers, Q_IDN) ) == -1 ) {
+	if ((rtn_val = sock_send_chars(sockfd, buffers, Q_IDN)) == -1)
+	{
 		goto DONE;
 	}
 
-	if( ( rtn_val = sock_recv_chars(sockfd, buffers) ) == -1 ) {
+	if ((rtn_val = sock_recv_chars(sockfd, buffers)) == -1)
+	{
 		goto DONE;
 	}
 
@@ -220,123 +236,103 @@ int main(int argc, char *argv[]) {
 
 	printf("Recieved from server: %s\n", buffers->recv_buffer);
 
+	/**************** SET INITIAL VIBE THRESHOLD FOR SYSTEM OFF STATE  ****************/
 
-	/**************** LOOP  ****************/ 
+	/****
+	 * todo: consider hardcoded threshold to verify that system
+	 * is off before proceeding with initialization
+	 */
 
-	// Poll setup
-	struct pollfd pfds[1];
-	pfds[0].fd = sockfd;
-	pfds[0].events = POLLIN;
-	pfds[0].revents = 0;
+	// setup axis stats for baseline here
+	struct AxisStats base_z_stats = {0};
+	struct AxisStats *base_z_axis = &base_z_stats;
 
-	// setup axis stats
-	struct AxisStats z_stats = {0};
-	struct AxisStats *z_axis = &z_stats;
-	
-
-	while (!caught_signal) 
+	// notify user of init process, don't touch system
+	printf("*** Establishing baseline stats ****\n");
+	printf("*** Set system on unmoving vibration target\n");
+	int axis = 3;
+	float baseline_recv_values[BASELINE_REQ_COUNT];
+	for (int i = 0; i < BASELINE_REQ_COUNT; i++)
 	{
-		/*******
-		 * poll for message available to read
-		 * the only time this would happen is if the pico got an interrupt from the sensor
-		 * it in turn will interrupt the client
-		 * 
-		 * if the poll times out, there was not a message received
-		 * 
-		 * in this case, the client queries for data
-		 * 
-		 * The client will then need to pass that data to a handler
-		 * The handler is capable of interpretting the data in some way
-		 * in our case it will be a simple threshold check
-		 * The handler then chooses the appropriate response to the data
-		 * i.e. it sets the dryer running flag appropriately
-		 * 		maybe it requests more data
-		 * 
-		 * 
-		 */
-		
-		pfds[0].revents = 0;
-		int num_events = poll(pfds, 1, 0);		// wait 10s for received data to be ready
-
-		// poll(pfds, 1, 10000);		// wait 10s for received data to be ready
-		//int pollin_happened = pfds[0].revents & POLLIN;
-		//printf("num_events: %i\n", num_events);
-		// if (pfds[0].revents & POLLIN)
-		if ( num_events > 0 ) {
-			printf("data is ready to be received\n");
-			if( ( rtn_val = sock_recv_chars(sockfd, buffers) ) == -1 ) {
-				goto DONE;
-			}
-			printf("Recieved from server: %s\n", buffers->recv_buffer);
-		} else {
-			/****
-			 * query for and recieve samples one at a time
-			 * allocate a buffer for storing received float values
-			 * 
-			 * loop over req count
-			 * recv 1, store in local buffer
-			 * iterate until loop count equal req count
-			 */
-			
-			int req_count = 10;
-			int axis = 3;
-			float recv_values[req_count];
-			printf("Querying for %i samples on axis %i\n", req_count, axis);
-			for(int i = 0; i < req_count; i++) {
-				// query for data
-				if( ( rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1) ) == -1 ) {
-					goto DONE;
-				}
-
-				// recieve
-				if( ( rtn_val = sock_recv_data(sockfd, buffers) ) == -1 ) {
-					goto DONE;
-				}
-				//printf("loop i = %i, received %i bytes\n", i, buffers->data_bytes);
-				recv_values[i] = *buffers->data_buffer;
-				printf("Recieved: %.4f\n", recv_values[i]);
-			}
-
-			calc_stats(recv_values, req_count, z_axis);
-			printf("mean_val = %.4f\n", z_axis->mean);
-			printf("stddev = %.4f\n", z_axis->stddev);
-
-
-/* 			if( ( rtn_val = sock_recv_data(sockfd, buffers) ) == -1 ) {
-				goto DONE;
-			}
-
-			float temp[req_count];
-			for (int i = 0; i < req_count; i++) {
-				temp[i] = buffers->data_buffer[i];
-				printf("temp[%i] = %0.4f\n", i, *(temp + i*sizeof(float)) );
-			}
-
-			// receive data
-			if( ( rtn_val = sock_recv_data(sockfd, buffers) ) == -1 ) {
-				goto DONE;
-			}
-
-			printf("Recieved from server: %.4f\n", buffers->data_buffer[0]);
-			printf("Recieved from server: %.4f\n", buffers->data_buffer[1]);
-			printf("Recieved from server: %.4f\n", buffers->data_buffer[2]);
-			printf("Recieved from server: %.4f\n", buffers->data_buffer[3]);
-			printf("Recieved from server: %.4f\n", buffers->data_buffer[4]); */
-			
+		// query for data
+		if ((rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1)) == -1)
+		{
+			goto DONE;
 		}
 
-		sleep(5);
+		// recieve
+		if ((rtn_val = sock_recv_data(sockfd, buffers)) == -1)
+		{
+			goto DONE;
+		}
+		baseline_recv_values[i] = *buffers->data_buffer;
+		// printf("Recieved: %.4f\n", baseline_recv_values[i]);
+	}
 
-	}	// while
+	calc_stats(baseline_recv_values, BASELINE_REQ_COUNT, base_z_axis);
+	printf("baseline mean_val = %.4fg\n", base_z_axis->mean);
+	printf("baseline stddev = %.4fg\n", base_z_axis->stddev);
+
+	// establish 3 sigma stddev threshold here
+	float baseline_stddev_ths = 3 * base_z_axis->stddev;
+	printf("stddev threshold set to %.4fg\n", baseline_stddev_ths);
+
+	printf("*** Baseline setup completed ****\n\n\n");
+
+	/**************** LOOP  ****************/
+
+	// setup axis stats for loop here
+	struct AxisStats z_stats = {0};
+	struct AxisStats *z_axis = &z_stats;
+
+	// setup vars for loop
+	float recv_values[REQ_COUNT_10]; // buffer for storing received vibe data
+	int loop_sleep_secs = g_passive_mon_sleep_secs;
+
+	while (!caught_signal)
+	{
+		/*******
+		 * Get data and process stats
+		 * check against baseline stddev threshold
+		 */
+
+		printf("****************\n");
+		printf("Querying for %i samples on axis %i\n", REQ_COUNT_10, axis);
+		for (int i = 0; i < REQ_COUNT_10; i++)
+		{
+			// query for data
+			if ((rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1)) == -1)
+			{
+				goto DONE;
+			}
+
+			// recieve
+			if ((rtn_val = sock_recv_data(sockfd, buffers)) == -1)
+			{
+				goto DONE;
+			}
+			// printf("loop i = %i, received %i bytes\n", i, buffers->data_bytes);
+			recv_values[i] = *buffers->data_buffer;
+			// printf("Recieved: %.4f\n", recv_values[i]);
+		}
+
+		calc_stats(recv_values, REQ_COUNT_10, z_axis);
+		printf("mean_val = %.4f\n", z_axis->mean);
+		printf("stddev = %.4f\n", z_axis->stddev);
+
+		sleep(loop_sleep_secs);
+
+	} // while
 
 	/**************** Cleanup and Exit ****************/
- 
-	DONE:
 
-	close(sockfd); 
-	freeaddrinfo(servinfo);		// free the linked list
+DONE:
 
-	if ( caught_signal == true ) {
+	close(sockfd);
+	freeaddrinfo(servinfo); // free the linked list
+
+	if (caught_signal == true)
+	{
 		syslog(LOG_DEBUG, "Caught signal, exiting\n");
 		printf("Caught signal, exiting\n");
 	}
@@ -348,7 +344,6 @@ int main(int argc, char *argv[]) {
 	return rtn_val;
 }
 
-
 /**************** Functions ****************/
 // TODO move these to utils file
 
@@ -359,24 +354,26 @@ int main(int argc, char *argv[]) {
  *
  * 		returns:
  * 				0 	= successful receive
- * 				-1 	= error in recv 
+ * 				-1 	= error in recv
  */
-int sock_recv_chars(int fd, struct Buffers *buf) {
+int sock_recv_chars(int fd, struct Buffers *buf)
+{
 
 	int sockfd = fd;
 	// clear the receive buffer and length
 	memset(buf->recv_buffer, 0, RCV_BUF_SIZE);
-	buf->recv_len = 0; 
+	buf->recv_len = 0;
 
 	errno = 0;
 	int numbytes = recv(sockfd, buf->recv_buffer, RCV_BUF_SIZE, 0);
-	if ( numbytes == -1 ) {
+	if (numbytes == -1)
+	{
 		printf("error in sock_recv_chars() in recv() call: %s\n", strerror(errno));
 		return -1;
-    }
+	}
 
-	buf->recv_len = numbytes;	
-	buf->recv_buffer[numbytes] = '\0';		// null termination for string
+	buf->recv_len = numbytes;
+	buf->recv_buffer[numbytes] = '\0'; // null termination for string
 	return 0;
 }
 
@@ -387,24 +384,26 @@ int sock_recv_chars(int fd, struct Buffers *buf) {
  *
  * 		returns:
  * 				0 	= successful receive
- * 				-1 	= error in recv 
+ * 				-1 	= error in recv
  */
-int sock_recv_data(int fd, struct Buffers *buf) {
+int sock_recv_data(int fd, struct Buffers *buf)
+{
 
 	int sockfd = fd;
 	// clear the receive buffer and length
-	memset(buf->data_buffer, 0, DATA_BUF_SIZE*sizeof(float));
-	buf->data_count = 0; 
-	buf->data_bytes = 0; 
+	memset(buf->data_buffer, 0, DATA_BUF_SIZE * sizeof(float));
+	buf->data_count = 0;
+	buf->data_bytes = 0;
 
 	errno = 0;
 	int numbytes = recv(sockfd, buf->data_buffer, DATA_BUF_SIZE, 0);
-	if ( numbytes == -1 ) {
+	if (numbytes == -1)
+	{
 		printf("error in sock_recv_data() in recv() call: %s\n", strerror(errno));
 		return -1;
-    }
+	}
 
-	buf->data_bytes = numbytes;	
+	buf->data_bytes = numbytes;
 	return 0;
 }
 
@@ -416,22 +415,24 @@ int sock_recv_data(int fd, struct Buffers *buf) {
  *
  * 		returns:
  * 				0 	= successful send
- * 				-1 	= error in recv 
+ * 				-1 	= error in recv
  */
-int sock_send_chars(int fd, struct Buffers *buf, char *msg) {
+int sock_send_chars(int fd, struct Buffers *buf, char *msg)
+{
 
 	int sockfd = fd;
 	// clear the receive buffer
 	memset(buf->send_buffer, 0, SEND_BUF_SIZE);
 	strncpy(buffers->send_buffer, msg, strlen(msg));
-	buf->send_len = sizeof(msg); 
+	buf->send_len = sizeof(msg);
 
 	errno = 0;
 	int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
-	if ( numbytes == -1 ) {
+	if (numbytes == -1)
+	{
 		printf("error in sock_esnd_chars() in send() call: %s\n", strerror(errno));
 		return -1;
-    }
+	}
 
 	return 0;
 }
@@ -446,9 +447,10 @@ int sock_send_chars(int fd, struct Buffers *buf, char *msg) {
  *
  * 		returns:
  * 				0 	= successful send
- * 				-1 	= error in recv 
+ * 				-1 	= error in recv
  */
-int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count) {
+int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count)
+{
 
 	int sockfd = fd;
 	// clear the receive buffer
@@ -459,45 +461,46 @@ int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int cou
 	 * start with msg and add the suffix to it
 	 * suffix is <axis>,<count>
 	 *  Only 1 digit count supported
-	 * 
+	 *
 	 * Note that msg is a string literal
 	 * so it has '\0'
 	 * but strlen("DATA?") does not count it
-	 * 
+	 *
 	 * be careful using strlen in this section
 	 */
-	
-	 // build the suffix
-	int suf_count = 3;		// Only 1 digit count supported
+
+	// build the suffix
+	int suf_count = 3; // Only 1 digit count supported
 	char suf[suf_count];
 	suf[0] = axis + '0';
 	suf[1] = ',';
 	suf[2] = count + '0';
-	//printf("Requesting <axis> #%i with <count> %i\n", axis, count);
-	
+	// printf("Requesting <axis> #%i with <count> %i\n", axis, count);
+
 	// now build the full message
 	int msg_count = strlen(msg);
 	int full_msg_count = msg_count + suf_count;
 	char full_msg[full_msg_count];
-	strncpy(full_msg, msg, msg_count);		// does not include null terminator when copied
+	strncpy(full_msg, msg, msg_count); // does not include null terminator when copied
 	strncpy(full_msg + msg_count, suf, suf_count);
-	char str_full_msg[full_msg_count+1];
+	char str_full_msg[full_msg_count + 1];
 	strncpy(str_full_msg, full_msg, full_msg_count);
 	str_full_msg[full_msg_count] = '\0';
-	//printf("str_full_msg: %s\n", str_full_msg);
+	// printf("str_full_msg: %s\n", str_full_msg);
 
 	// build message
 	strncpy(buffers->send_buffer, full_msg, strlen(full_msg));
 
 	// compute length
-	buf->send_len = sizeof(full_msg); 
+	buf->send_len = sizeof(full_msg);
 
 	errno = 0;
 	int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
-	if ( numbytes == -1 ) {
+	if (numbytes == -1)
+	{
 		printf("error in sock_esnd_chars() in send() call: %s\n", strerror(errno));
 		return -1;
-    }
+	}
 
 	return 0;
 }
@@ -510,30 +513,33 @@ int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int cou
  *
  * 		returns: nones\
  */
-void calc_stats(float *buf, int count, struct AxisStats *ax_stats) {
-	
+void calc_stats(float *buf, int count, struct AxisStats *ax_stats)
+{
+
 	// calculate mean
 	float mean_val = 0, sum = 0;
-	for (int i = 0; i<count; i++) {
+	for (int i = 0; i < count; i++)
+	{
 		sum += buf[i];
 	}
 	mean_val = sum / count;
 	ax_stats->mean = mean_val;
-	//printf("mean_val = %.4f\n", ax_stats->mean);
+	// printf("mean_val = %.4f\n", ax_stats->mean);
 
 	// calculate standard deviation
 	float stddev = 0;
 	float temp[count];
 	float temp_sum = 0;
-	for (int i = 0; i<count; i++) {
+	for (int i = 0; i < count; i++)
+	{
 		temp[i] = buf[i] - mean_val;
-		temp[i] = temp[i]*temp[i];
+		temp[i] = temp[i] * temp[i];
 		temp_sum += temp[i];
 	}
 	stddev = temp_sum / (count - 1);
 	stddev = sqrtf(stddev);
 	ax_stats->stddev = stddev;
-	//printf("stddev = %.4f\n", stddev);
+	// printf("stddev = %.4f\n", stddev);
 
 	return;
 }
