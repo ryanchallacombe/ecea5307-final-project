@@ -56,6 +56,11 @@ struct Buffers{
 struct Buffers buf = {0};
 struct Buffers *buffers = &buf;
 
+struct AxisStats{
+	float mean;
+	float stddev;
+};
+
 /**********************************
 *	Function protos
 **********************************/
@@ -63,6 +68,7 @@ int sock_recv_chars(int fd, struct Buffers *buf);
 int sock_recv_data(int fd, struct Buffers *buf);
 int sock_send_chars(int fd, struct Buffers *buf, char *msg);
 int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count);
+void calc_stats(float *buf, int count, struct AxisStats *ax_stats);
 
 /**********************************
 *	Main
@@ -223,8 +229,10 @@ int main(int argc, char *argv[]) {
 	pfds[0].events = POLLIN;
 	pfds[0].revents = 0;
 
-	// int loop_ctr = 0;
-	// int max_loop_ct = 10;
+	// setup axis stats
+	struct AxisStats z_stats = {0};
+	struct AxisStats *z_axis = &z_stats;
+	
 
 	while (!caught_signal) 
 	{
@@ -261,10 +269,47 @@ int main(int argc, char *argv[]) {
 			}
 			printf("Recieved from server: %s\n", buffers->recv_buffer);
 		} else {
+			/****
+			 * query for and recieve samples one at a time
+			 * allocate a buffer for storing received float values
+			 * 
+			 * loop over req count
+			 * recv 1, store in local buffer
+			 * iterate until loop count equal req count
+			 */
+			
+			int req_count = 10;
+			int axis = 3;
+			float recv_values[req_count];
+			printf("Querying for %i samples on axis %i\n", req_count, axis);
+			for(int i = 0; i < req_count; i++) {
+				// query for data
+				if( ( rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1) ) == -1 ) {
+					goto DONE;
+				}
 
-			// query for data
-			if( ( rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, 3, 1) ) == -1 ) {
+				// recieve
+				if( ( rtn_val = sock_recv_data(sockfd, buffers) ) == -1 ) {
+					goto DONE;
+				}
+				//printf("loop i = %i, received %i bytes\n", i, buffers->data_bytes);
+				recv_values[i] = *buffers->data_buffer;
+				printf("Recieved: %.4f\n", recv_values[i]);
+			}
+
+			calc_stats(recv_values, req_count, z_axis);
+			printf("mean_val = %.4f\n", z_axis->mean);
+			printf("stddev = %.4f\n", z_axis->stddev);
+
+
+/* 			if( ( rtn_val = sock_recv_data(sockfd, buffers) ) == -1 ) {
 				goto DONE;
+			}
+
+			float temp[req_count];
+			for (int i = 0; i < req_count; i++) {
+				temp[i] = buffers->data_buffer[i];
+				printf("temp[%i] = %0.4f\n", i, *(temp + i*sizeof(float)) );
 			}
 
 			// receive data
@@ -273,10 +318,14 @@ int main(int argc, char *argv[]) {
 			}
 
 			printf("Recieved from server: %.4f\n", buffers->data_buffer[0]);
+			printf("Recieved from server: %.4f\n", buffers->data_buffer[1]);
+			printf("Recieved from server: %.4f\n", buffers->data_buffer[2]);
+			printf("Recieved from server: %.4f\n", buffers->data_buffer[3]);
+			printf("Recieved from server: %.4f\n", buffers->data_buffer[4]); */
 			
 		}
 
-		sleep(9);
+		sleep(5);
 
 	}	// while
 
@@ -405,34 +454,37 @@ int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int cou
 	// clear the receive buffer
 	memset(buf->send_buffer, 0, SEND_BUF_SIZE);
 
-	// build suffix: <axis>,<count>
-	// Only 1 digit count supported
+	/*********
+	 * build full message
+	 * start with msg and add the suffix to it
+	 * suffix is <axis>,<count>
+	 *  Only 1 digit count supported
+	 * 
+	 * Note that msg is a string literal
+	 * so it has '\0'
+	 * but strlen("DATA?") does not count it
+	 * 
+	 * be careful using strlen in this section
+	 */
+	
+	 // build the suffix
 	int suf_count = 3;		// Only 1 digit count supported
 	char suf[suf_count];
 	suf[0] = axis + '0';
 	suf[1] = ',';
 	suf[2] = count + '0';
-	printf("Requesting <axis>,<count>: %s\n", suf);
+	//printf("Requesting <axis> #%i with <count> %i\n", axis, count);
 	
-	/*********
-	 * build full message
-	 * start with msg and add the suffix to it
-	 * suffix is <axis>,<count>
-	 */
-
-	// TODO: strlen() should not be used here, these are not strings
-	int full_msg_count = strlen(msg) + suf_count;
-	printf("full_msg count: %i\n", full_msg_count);
+	// now build the full message
+	int msg_count = strlen(msg);
+	int full_msg_count = msg_count + suf_count;
 	char full_msg[full_msg_count];
-	strncpy(full_msg, msg, strlen(msg));
-	//printf("full_msg: %s\n", full_msg);
-	//strncpy(full_msg[strlen(msg)-1], suf, strlen(suf));
-	strncpy(full_msg + strlen(msg), suf, strlen(suf));
-	char str_full_msg[strlen(full_msg + 1)];
-	strncpy(str_full_msg, full_msg, strlen(full_msg));
-	//strncpy(str_full_msg + strlen(full_msg), "\0", 1);
-	str_full_msg[8] = '\0';
-	printf("str_full_msg: %s\n", str_full_msg);
+	strncpy(full_msg, msg, msg_count);		// does not include null terminator when copied
+	strncpy(full_msg + msg_count, suf, suf_count);
+	char str_full_msg[full_msg_count+1];
+	strncpy(str_full_msg, full_msg, full_msg_count);
+	str_full_msg[full_msg_count] = '\0';
+	//printf("str_full_msg: %s\n", str_full_msg);
 
 	// build message
 	strncpy(buffers->send_buffer, full_msg, strlen(full_msg));
@@ -448,4 +500,40 @@ int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int cou
     }
 
 	return 0;
+}
+
+/***********
+ * calc_stats()
+ * 		inputs: *buf = array of values to be processed
+ * 				count = number of values in the array
+ * 				*ax_stats = struct that will hold stats
+ *
+ * 		returns: nones\
+ */
+void calc_stats(float *buf, int count, struct AxisStats *ax_stats) {
+	
+	// calculate mean
+	float mean_val = 0, sum = 0;
+	for (int i = 0; i<count; i++) {
+		sum += buf[i];
+	}
+	mean_val = sum / count;
+	ax_stats->mean = mean_val;
+	//printf("mean_val = %.4f\n", ax_stats->mean);
+
+	// calculate standard deviation
+	float stddev = 0;
+	float temp[count];
+	float temp_sum = 0;
+	for (int i = 0; i<count; i++) {
+		temp[i] = buf[i] - mean_val;
+		temp[i] = temp[i]*temp[i];
+		temp_sum += temp[i];
+	}
+	stddev = temp_sum / (count - 1);
+	stddev = sqrtf(stddev);
+	ax_stats->stddev = stddev;
+	//printf("stddev = %.4f\n", stddev);
+
+	return;
 }
