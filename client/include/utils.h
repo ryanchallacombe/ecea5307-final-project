@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <poll.h>
 #include <math.h>
+#include <time.h>
 
 #ifndef UTILS_H
 #define	UTILS_H
