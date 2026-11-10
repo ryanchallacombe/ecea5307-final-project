@@ -23,11 +23,11 @@
 #define RCV_BUF_SIZE 1024
 #define SEND_BUF_SIZE 512
 #define DATA_BUF_SIZE 256
-#define BASELINE_REQ_COUNT 	100
-#define REQ_COUNT_10 		10
-#define REQ_COUNT_25		25
-#define REQ_COUNT_50 		50
-#define LOOP_REQ_COUNT		REQ_COUNT_25
+#define BASELINE_REQ_COUNT 100
+#define REQ_COUNT_10 10
+#define REQ_COUNT_25 25
+#define REQ_COUNT_50 50
+#define LOOP_REQ_COUNT REQ_COUNT_25
 
 /**********************************
  *	Globals
@@ -41,9 +41,9 @@ char *Q_DATA = "DATA?";
 char send_buffer[SEND_BUF_SIZE];
 float data_buffer[DATA_BUF_SIZE]; */
 size_t numbytes;
-int g_passive_mon_sleep_secs = 10;		// while loop sleep time for when machine is OFF
-int g_active_mon_sleep_secs = 10;		// while loop sleep time for when machine is ON
-bool D_RUN = false;						// 'dryer running' flag
+int g_passive_mon_sleep_secs = 10; // while loop sleep time for when machine is OFF
+int g_active_mon_sleep_secs = 10;  // while loop sleep time for when machine is ON
+bool D_RUN = false;				   // 'dryer running' flag
 
 struct Buffers
 {
@@ -98,11 +98,17 @@ int main(int argc, char *argv[])
 	printf("***** Starting program: %s\n", prog_name);
 
 	// show wall clock time
-	//struct timespec now;
-	//clock_gettime(CLOCK_REALTIME, &now);
 	time_t now = time(NULL);
 	syslog(LOG_DEBUG, "***** Current time: %s\n", ctime(&now));
 	printf("***** Current time: %s\n", ctime(&now));
+
+	// check to make sure the server ip was passed in as an argument
+	if (argc < 2)
+	{
+		printf("usage: aesd_client <server_ip>\n");
+		rtn_val = -1;
+		goto DONE;
+	}
 
 	/************************* Signal handler setup *************************/
 	caught_signal = false; // Signal handler flag
@@ -136,6 +142,33 @@ int main(int argc, char *argv[])
 			perror("remove");
 	}
 
+	/********** Daemon mode **********/
+
+	// Daemon mode is invoked by argument 2 as '-d' when this application is invoked from command line
+	pid_t pid;
+	if (argc > 2) { // check to ensure we got a command line argument
+		if (!strncmp("-d", argv[2], 2))
+		{
+			printf("Daemon mode invoked.\n");
+
+			pid = fork();
+			if (pid == -1)
+			{ // fork error
+				perror("fork");
+				rtn_val = -1;
+				goto PARENT_DONE;
+			}
+			else if (pid != 0)
+			{ // pid = 0 is child pid
+
+				// exit parent process
+				printf("Exiting parent process\n");
+				rtn_val = 0;
+				goto PARENT_DONE;
+			}
+		}
+	}
+
 	/************************* Socket *************************/
 	// setup
 	// const char *port = "4242";
@@ -148,12 +181,7 @@ int main(int argc, char *argv[])
 	hints.ai_socktype = SOCK_STREAM;  // TCP stream sockets
 	hints.ai_flags = AI_PASSIVE;	  // fill in my localhost IP for me
 
-	if (argc != 2)
-	{
-		printf("usage: aesd_client <server_ip>\n");
-		rtn_val = -1;
-		goto DONE;
-	}
+
 
 	// getaddrinfo call
 	int ret;
@@ -206,29 +234,32 @@ int main(int argc, char *argv[])
 	syslog(LOG_DEBUG, "Client connected to %s\n", ipstr);
 	printf("Client connected to %s\n", ipstr);
 
-	// TODO: support daemon mode or delete
 	/********** Daemon mode **********/
 
-	// Daemon mode is invoked by argument 1 as '-d' when this application is invoked from command line
-	/* 	pid_t pid;
-		if (argc > 1) {			// check to ensure we got a command line argument
-			if ( !strncmp("-d", argv[1], 2) ) {
-				printf("Daemon mode invoked.\n");
+/* 	// Daemon mode is invoked by argument 2 as '-d' when this application is invoked from command line
+	pid_t pid;
+	if (argc > 2) { // check to ensure we got a command line argument
+		if (!strncmp("-d", argv[2], 2))
+		{
+			printf("Daemon mode invoked.\n");
 
-				pid = fork();
-				if ( pid == -1) {			// fork error
-					perror("fork");
-					rtn_val = -1;
-					goto DONE;
-				} else if ( pid != 0 ) {	// pid = 0 is child pid
-
-					// exit parent process
-					printf("Exiting parent process\n");
-					rtn_val = 0;
-					goto DONE;
-				}
+			pid = fork();
+			if (pid == -1)
+			{ // fork error
+				perror("fork");
+				rtn_val = -1;
+				goto DONE;
 			}
-		} */
+			else if (pid != 0)
+			{ // pid = 0 is child pid
+
+				// exit parent process
+				printf("Exiting parent process\n");
+				rtn_val = 0;
+				goto DONE;
+			}
+		}
+	} */
 
 	/************************* INITIAL COMMS *************************/
 
@@ -290,9 +321,8 @@ int main(int argc, char *argv[])
 	// establish 3 sigma stddev threshold here
 	float baseline_stddev_ths = 3 * base_z_axis->stddev;
 	printf("stddev threshold set to %.4fg\n", baseline_stddev_ths);
-	syslog(LOG_DEBUG,"stddev threshold set to %.4fg\n", baseline_stddev_ths);
+	syslog(LOG_DEBUG, "stddev threshold set to %.4fg\n", baseline_stddev_ths);
 
-	
 	/***
 	 * establish an out-of-bounds threshold to use for filtering out extreme events
 	 * any data captures with 1 value above this threshold must be redone
@@ -323,7 +353,8 @@ int main(int argc, char *argv[])
 		 * check against baseline stddev threshold
 		 */
 
-		do {
+		do
+		{
 			printf("****************\n");
 			printf("Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, axis);
 			syslog(LOG_DEBUG, "****************\n");
@@ -333,7 +364,7 @@ int main(int argc, char *argv[])
 			for (int i = 0; i < LOOP_REQ_COUNT; i++)
 			{
 				OOB_flag = false;
-				
+
 				// query for data
 				if ((rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1)) == -1)
 				{
@@ -349,13 +380,14 @@ int main(int argc, char *argv[])
 				recv_values[i] = *buffers->data_buffer;
 				// printf("Recieved: %.4f\n", recv_values[i]);
 
-				if ( recv_values[i] > OOB_ths) { 
+				if (recv_values[i] > OOB_ths)
+				{
 					printf("\n***OOB value received: %.4fg\n\n", recv_values[i]);
-					OOB_flag = true; 
+					OOB_flag = true;
 					break;
 				}
 			}
-		} while ( OOB_flag );	
+		} while (OOB_flag);
 
 		calc_stats(recv_values, LOOP_REQ_COUNT, z_axis);
 		printf("mean_val = %.4f\n", z_axis->mean);
@@ -364,20 +396,27 @@ int main(int argc, char *argv[])
 		syslog(LOG_DEBUG, "stddev = %.4f\n", z_axis->stddev);
 
 		/**************** THRESHOLD CHECK  AND ACTIONS ****************/
-		if ( z_stats.stddev > baseline_stddev_ths ) {	
+		if (z_stats.stddev > baseline_stddev_ths)
+		{
 			printf("**** stddev %.4fg exceeds threshold %.4fg ****\n\n", z_axis->stddev, baseline_stddev_ths);
-			
-			if ( !D_RUN ) {
+
+			if (!D_RUN)
+			{
 				D_RUN = true;
 				printf("******* D_RUN flag set to true\n");
 				loop_sleep_secs = g_active_mon_sleep_secs;
 				// todo send textbelt call here ... dryer started
-			} else {
+			}
+			else
+			{
 				printf("Dryer is still running\n");
 				syslog(LOG_DEBUG, "Dryer is still running\n");
 			}
-		} else {		
-			if ( D_RUN ) {
+		}
+		else
+		{
+			if (D_RUN)
+			{
 				D_RUN = false;
 				printf("******* D_RUN flag set to false\n\\");
 				printf("***************** Dryer stopped\n");
@@ -389,7 +428,7 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		/**************** SLEEP ****************/		
+		/**************** SLEEP ****************/
 		sleep(loop_sleep_secs);
 
 	} // while
@@ -400,6 +439,8 @@ DONE:
 
 	close(sockfd);
 	freeaddrinfo(servinfo); // free the linked list
+
+PARENT_DONE:		// DONE section for -d daemon mode
 
 	if (caught_signal == true)
 	{
