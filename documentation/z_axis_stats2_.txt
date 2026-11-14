@@ -1,0 +1,13 @@
+Recieved: 1.0296
+Recieved: 1.0296
+Recieved: 1.0374
+Recieved: 1.0296
+Recieved: 1.0374
+Recieved: 1.0374
+Recieved: 1.0374
+Recieved: 1.0374
+Recieved: 1.0374
+Recieved: 1.0374
+mean_val = 1.0351
+stddev = 0.0038
+

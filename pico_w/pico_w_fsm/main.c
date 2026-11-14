@@ -17,13 +17,12 @@
 
 /**
  * Todos:
- * figure out lis3dh settings for interrupt. consider using a different axis
- *      reference updated settings in "C:\Users\ryanc\Documents\pico_projects\pico_w_motion_detector\main.c" from 9/29 updates
- * add time array to tcp structure to transmit during send data function
- * 
  * reset send_len and others everytime memset is done
+ * need to be consistent about when buffer(s) is cleared
  * 
- *         // todo: need to be consistent about when buffer(s) is cleared
+ * clean up tcp functions
+ * 
+ * remove unused FSM states
  */
 
 /**********************************
@@ -58,6 +57,8 @@ bool s_server_setup_fail = false;
 bool s_lis3dh_setup_fail = false;
 bool s_lis3dh_interrupt_fail = false;
 
+int loop_sleep_ms = 100;
+
 // Define the queries from the client
 char *Q_IDN = "IDN?";
 /***
@@ -66,11 +67,12 @@ char *Q_IDN = "IDN?";
  *      example: a request for 50 samples of z-axis
  *          'DATA?3,50'
  *      axis numbers are: x=1, y=2, z=3
+ *  as of 11/13/2026 only 1 sample per request is supported
  * 
  */
 char *Q_DATA = "DATA?";
-uint8_t q_data_axis_offs = 5;       // zero referenced offset of the axis requested
-uint8_t q_data_count_offs = 7;      // zero referenced offset of the sample count requested
+uint8_t q_data_axis_offs = 5;       // zero referenced char offset of the axis requested from the client
+uint8_t q_data_count_offs = 7;      // zero referenced char offset of the sample count requested from client
 
 
 bool data_requested = false;     // set in handle_recved_msg() and reset in tcp_send_data()
@@ -82,8 +84,6 @@ typedef struct TCP_SERVER_T_ {
     char recv_buffer[BUF_SIZE];
     char send_buffer[BUF_SIZE];
     float send_data_buffer[BUF_SIZE];
-    //struct DATA_MSG_T struct_data[BUF_SIZE];
-    //struct data_msg struct_data;
     int send_len;
     int sent_len;
     int recv_len;
@@ -109,31 +109,6 @@ const uint8_t SET_CTRL_REG_1 = 0x97;     // enable 3 axes, high res / nomal powe
 // full scale setting
 const uint8_t CTRL_REG_4 = 0x23;
 const uint8_t SET_CTRL_REG_4 = 0x16;    // +/-4g FS
-
-// interrupt settings
-const uint8_t CTRL_REG_3 = 0x22;        // interrupt control register
-const uint8_t SET_CTRL_REG_3 = 0x40;    // enable interrupt when IA (interrupt active)
-
-// interrupt settings
-const uint8_t CTRL_REG_5 = 0x24;        // interrupt control register
-const uint8_t SET_CTRL_REG_5 = 0x08;    // latch interrupt 1
-
-// INT1_CFG = 0x30, INT1_SRC = 0x31, INT1_THS = 0x32, INT1_DURATION = 0x33
-const uint8_t INT1_CFG = 0x30;
-const uint8_t SET_INT1_CFG = 0x60;      // Enable interrupt on HIGH threshold on Z-axis, ref table 53
-
-const uint8_t INT1_SRC = 0x31;
-const uint8_t INT1_THS = 0x32;        
-const uint8_t SET_INT1_THS = 0x40;      // set to 64 LSBs (2g for +/-4g fs), ref table 59
-
-const uint8_t INT1_DURATION = 0x33;
-const uint8_t SET_INT1_DURATION = 0x00;  // 1 decimal, ref table 61
-
-float x_accel, y_accel, z_accel;
-
-bool lis3dh_int_triggered = false;      // flag that is set in the gpio interrupt callback
-const uint8_t int1_src_addr = INT1_SRC;
-uint8_t int1_src = 0;
 
 /**********************************
  *  FUNCTION PROTOTYPES
@@ -176,7 +151,6 @@ int main()
     if (cyw43_arch_init())
     {
         printf("Wi-Fi init failed\n");
-        //s_initialize_fail = true;
         return -1;
     }
 
@@ -187,15 +161,13 @@ int main()
     if (cyw43_arch_wifi_connect_timeout_ms(wifi_ssid, wifi_pw, CYW43_AUTH_WPA2_AES_PSK, 30000))
     {
         printf("failed to connect.\n");
-        //s_initialize_fail = true;
         return -1;
     }
     else
     {
-        printf("Connected.\n");
         // Read the ip address in a human readable way
         uint8_t *ip_address = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
-        printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+        printf("Connected with IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
     }
     busy_wait_ms(500);
 
@@ -216,14 +188,6 @@ int main()
         return -1;
     }
 
-    absolute_time_t abstime = get_absolute_time();  
-    uint64_t since_boot_us = to_us_since_boot(abstime);
-    char fmt_abstime[20];
-    //strftime(fmt_abstime, sizeof(fmt_abstime), "%Y-%m-%d %H:%M:%S", &abstime);
-    printf("time: %lld\n", abstime);
-    //printf("time: %s\n", fmt_abstime);
-    printf("us since boot: %lld\n", since_boot_us);
-
     currentState = nextState = S_INITIALIZE;
 
     uponEnter(currentState, tcp_state);
@@ -231,7 +195,7 @@ int main()
     printf("Starting while() loop ....\n");
 
     while(true) {
-        sleep_ms(500);
+        sleep_ms(loop_sleep_ms);
 
         // Udate FSM
         updateStateMachine( currentState );
@@ -281,60 +245,26 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
             gpio_set_function(PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C);
             gpio_pull_up(PICO_DEFAULT_I2C_SDA_PIN);
             gpio_pull_up(PICO_DEFAULT_I2C_SCL_PIN);
-            // Make the I2C pins available to picotool
-            bi_decl(bi_2pins_with_func(PICO_DEFAULT_I2C_SDA_PIN, PICO_DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C));
             lis3dh_init();
-
-            /**********************************
-             *  GPIO INTERRUPT SETUP
-            *********************************/
-            // setup interrupts but don't enable yet
-            gpio_init(GPIO_INT_PIN);
-            gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
 
             break;
         }
         case S_LOOP:
-            // enable interrupts for lis3dh
-            gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, true, &gpio_callback);
             break;
+
         case S_LIS3DH_INTERRUPT:
-        {
-            // disable interrupt and reset flag
-            gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
-            lis3dh_int_triggered = false;
-
-            // read where the interrupt came from and get some info
-            uint8_t int1_src = 0;
-            i2c_write_blocking(i2c_default, ADDRESS, &int1_src_addr, 1, true);
-            i2c_read_blocking(i2c_default, ADDRESS, &int1_src, 1, false);
-            printf("INT1_SRC: 0x%02X\n", int1_src);
-
-            // tell the client about the interrupt
-            memset(tcp_state->send_buffer, 0, BUF_SIZE); // clear send buffer
-            char *msg = "motion sensor sent interrupt";
-            strncpy(tcp_state->send_buffer, msg, strlen(msg));
-            tcp_state->send_len = strlen(msg);
-            g_err = tcp_server_send_data(arg, tcp_state->client_pcb);
-            if (g_err != ERR_OK) {
-                printf("error: failed to notify client of interrupt\n");
-                s_lis3dh_interrupt_fail = true;
-            }
-
             break;
-        }
+
         case S_ERROR:
             // free tcp state
             if (tcp_state) {
                 printf("Freeing tcp state\n");
                 free(tcp_state);
             }
-            gpio_set_irq_enabled_with_callback(GPIO_INT_PIN, GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
             break;
         default:
             break;
     }
-
 }
 
 void updateStateMachine( const enum FSM_State fsm_state ) {
@@ -375,11 +305,6 @@ void updateStateMachine( const enum FSM_State fsm_state ) {
         {
             // poll for data on tcp
             cyw43_arch_poll();
-
-            if ( lis3dh_int_triggered ) {
-                nextState = S_LIS3DH_INTERRUPT;
-            }
-
             break;
         }
         case S_LIS3DH_INTERRUPT:
@@ -470,30 +395,6 @@ void lis3dh_init() {
     buf[1] = SET_CTRL_REG_4;          
     i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
 
-    // latch interrupt 
-    buf[0] = CTRL_REG_5;
-    buf[1] = SET_CTRL_REG_5;  
-    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
-
-    // enable interrupt on IA 
-    buf[0] = CTRL_REG_3;
-    buf[1] = SET_CTRL_REG_3;  
-    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
-
-    // Turn on interrupt 1
-    buf[0] = INT1_CFG;
-    buf[1] = SET_INT1_CFG;
-    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
-
-    // Set threshold for interrupt 1 to 0x10 (16 decimal), ref table 59
-    buf[0] = INT1_THS;  
-    buf[1] = SET_INT1_THS;  
-    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
-
-    // Set duration for interrupt 1
-    buf[0] = INT1_DURATION; 
-    buf[1] = SET_INT1_DURATION;  // 1 decimal, ref table 61
-    i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
 }
 
 void lis3dh_calc_value(uint16_t raw_value, float *final_value, bool isAccel) {
@@ -554,15 +455,12 @@ void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel) {
 *********************************************/
 void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
-    
-    printf("lis3dh_data_capture fn \n");
-    printf("sizeof(float) = %zu\n", sizeof(float));
 
-    // todo: remove unused axes
+    // todo: update code for other axes
     //uint16_t accel_data_raw[n];
-    absolute_time_t daq_start = get_absolute_time();
+/*     absolute_time_t daq_start = get_absolute_time();
     uint64_t daq_start_us = to_us_since_boot(daq_start);
-    uint64_t sample_times_us[n];
+    uint64_t sample_times_us[n]; */
 
     switch (axis) {
         case X_Axis:     // X axis
@@ -582,27 +480,16 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
         case Z_Axis:     // Z axis
         {
             for (int i = 0; i < n; i++) {
-
-                //lis3dh_read_data(0x2C, accel_data_raw[i], true);
                 lis3dh_read_data(0x2C, tcp_state->send_data_buffer + i*sizeof(float), true);
-                //lis3dh_calc_value(accel_data_raw[i], tcp_state->send_data_buffer + i*sizeof(float), false);
-                
-                sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
-                //printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
-                //sleep_ms(100);
+                //sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
             }
             for (int i = 0; i < n; i++) {
                 printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
-                printf("Sample time in us: %lld\n", sample_times_us[i]);
+                //printf("Sample time in us: %lld\n", sample_times_us[i]);
             }
             break;
         }
     }
-}
-
-void gpio_callback(uint gpio, uint32_t events) {
-    lis3dh_int_triggered = true;
-    return;
 }
 
 /******************************************** 
@@ -628,6 +515,7 @@ err_t handle_recved_msg(void *arg) {
         // determine requested count by pulling it from the query string and converting to an int
         uint16_t requested_count = tcp_state->recv_buffer[q_data_count_offs] - '0';
         uint8_t requested_axis = tcp_state->recv_buffer[q_data_axis_offs] - '0';
+        uint16_t requested_byte_count = sizeof(float) * requested_count;
 
         // debug
         printf("data requested. count = %i, axis = %i\n", requested_count, requested_axis);
@@ -635,12 +523,6 @@ err_t handle_recved_msg(void *arg) {
         // done with the buffer so we can clear it
         memset( tcp_state->send_data_buffer, 0, BUF_SIZE*sizeof(float) );
         
-        /****
-         * loop over requested count
-         * capture 1 sample then send it
-         * repeat until loop count equal requested count
-         */
-        uint16_t requested_byte_count = sizeof(float) * requested_count;
         lis3dh_data_capture(tcp_state, requested_count, requested_axis);
         tcp_state->send_len = requested_byte_count;
         return tcp_server_send_data(arg, tcp_state->client_pcb);
@@ -791,11 +673,9 @@ err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
     // Two types of transmission, float and char
     err_t err = ERR_OK;
     if ( data_requested ) {
-        //err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
-        data_requested = false;     // reset flag
 
-        err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
-        err = tcp_write(tpcb, tcp_state->send_data_buffer+sizeof(float), tcp_state->send_len, TCP_WRITE_FLAG_COPY);         
+        data_requested = false;     // reset flag
+        err = tcp_write(tpcb, tcp_state->send_data_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);       
 
     } else {
         err = tcp_write(tpcb, tcp_state->send_buffer, tcp_state->send_len, TCP_WRITE_FLAG_COPY);
