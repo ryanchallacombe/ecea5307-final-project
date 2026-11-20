@@ -24,6 +24,7 @@
 #define RCV_BUF_SIZE 1024
 #define SEND_BUF_SIZE 512
 #define DATA_BUF_SIZE 256
+#define IP_ADDR_CHAR_COUNT	14	
 
 struct Buffers
 {
@@ -58,6 +59,8 @@ int sock_recv_data(int fd, struct Buffers *buf);
 int sock_send_chars(int fd, struct Buffers *buf, char *msg);
 int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count);
 void calc_stats(float *buf, int count, struct AxisStats *ax_stats);
+int try_server_connect(char *server_ip, char *tcp_port, int timeout_ms);
+void build_ipv4_addr_array(char *pfx, int suf_start, int suf_end, char target_ip[][IP_ADDR_CHAR_COUNT+1]);
 
 
 #endif

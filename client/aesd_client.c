@@ -8,7 +8,7 @@
 */
 
 /*
-** Usage: >> aesd_client <server_ip> <optional -d for daemon mode>
+** Usage: >> aesd_client <optional -d for daemon mode>
 */
 
 #include "include/utils.h"
@@ -17,19 +17,20 @@
  *	Defines
  **********************************/
 
-// #define MAXDATASIZE		1024						// max number of bytes
-#define RECVFILE "/var/tmp/aesd_client_data" // file for storing received messages
 #define TCP_PORT "4242"
-#define BASELINE_REQ_COUNT 100
-#define REQ_COUNT_10 10
-#define REQ_COUNT_25 25
-#define REQ_COUNT_50 50
-#define LOOP_REQ_COUNT REQ_COUNT_25
+#define BASELINE_REQ_COUNT 	100
+#define REQ_COUNT_10 		10
+#define REQ_COUNT_25 		25
+#define REQ_COUNT_50 		50
+#define LOOP_REQ_COUNT 		REQ_COUNT_25
+#define IP_PREFIX 			"192.168.86."
+#define IP_SUFFIX_START		25
+#define IP_SUFFIX_END		35
 
 /**********************************
  *	Globals
  **********************************/
-
+extern int ip_addr_char_count;
 extern bool caught_signal; // defined in utils.c
 char *Q_IDN = "IDN?";
 char *R_IDN = "pico w"; // expected response to query
@@ -41,10 +42,6 @@ bool D_RUN = false;				   // 'dryer running' flag
 
 struct Buffers buf = {0};
 struct Buffers *buffers = &buf;
-
-/**********************************
- *	Function protos
- **********************************/
 
 
 /**********************************
@@ -69,14 +66,6 @@ int main(int argc, char *argv[])
 	syslog(LOG_DEBUG, "***** Current time: %s\n", ctime(&now));
 	printf("***** Current time: %s\n", ctime(&now));
 
-	// check to make sure the server ip was passed in as an argument
-	if (argc < 2)
-	{
-		printf("usage: aesd_client <server_ip>\n");
-		rtn_val = -1;
-		goto DONE;
-	}
-
 	/************************* Signal handler setup *************************/
 	caught_signal = false; // Signal handler flag
 	struct sigaction new_action;
@@ -87,34 +76,20 @@ int main(int argc, char *argv[])
 	if (sigaction(SIGTERM, &new_action, NULL) != 0)
 	{
 		printf("Error %d (%s) registering for SIGTERM", errno, strerror(errno));
-		rtn_val = -1;
-		goto DONE;
+		return -1;
 	}
 	if (sigaction(SIGINT, &new_action, NULL))
 	{
 		printf("Error %d (%s) registering for SIGINT", errno, strerror(errno));
-		rtn_val = -1;
-		goto DONE;
-	}
-
-	/************************* Remove write file if it exists *************************/
-	char *wr_file_path = RECVFILE;
-	errno = 0;
-	FILE *fp;
-	if ((fp = fopen(wr_file_path, "r")) != NULL)
-	{
-		printf("Removing file: %s\n", wr_file_path);
-		fclose(fp);
-		if ((remove(wr_file_path)) == -1)
-			perror("remove");
+		return -1;
 	}
 
 	/********** Daemon mode **********/
 
 	// Daemon mode is invoked by argument 2 as '-d' when this application is invoked from command line
 	pid_t pid;
-	if (argc > 2) { // check to ensure we got a command line argument
-		if (!strncmp("-d", argv[2], 2))
+	if (argc > 1) { // check to ensure we got a command line argument
+		if (!strncmp("-d", argv[1], 2))
 		{
 			printf("Daemon mode invoked.\n");
 
@@ -122,111 +97,55 @@ int main(int argc, char *argv[])
 			if (pid == -1)
 			{ // fork error
 				perror("fork");
-				rtn_val = -1;
-				goto PARENT_DONE;
+				return -1;
 			}
 			else if (pid != 0)
 			{ // pid = 0 is child pid
 
 				// exit parent process
 				printf("Exiting parent process\n");
-				rtn_val = 0;
-				goto PARENT_DONE;
+				return 0;
 			}
 		}
-	}
+	}	
+
+	/************************* Build list of addresses *************************/
+	char *slash_24 = IP_PREFIX;
+	int suf_start = IP_SUFFIX_START;
+	int suf_end = IP_SUFFIX_END;
+	char target_ip[suf_end - suf_start + 1][ip_addr_char_count+1];			// include room for null terminator
+
+	build_ipv4_addr_array(slash_24, suf_start, suf_end, target_ip);
 
 	/************************* Socket *************************/
-	// setup
-	// const char *port = "4242";
-	struct addrinfo hints;
-	struct addrinfo *servinfo; // will point to the linked list of results
-
-	// hints setup
-	memset(&hints, 0, sizeof(hints)); // make sure that the struct is cleared
-	hints.ai_family = AF_UNSPEC;	  // don't care if ipv4 or ipv6
-	hints.ai_socktype = SOCK_STREAM;  // TCP stream sockets
-	hints.ai_flags = AI_PASSIVE;	  // fill in my localhost IP for me
-
-
-
-	// getaddrinfo call
-	int ret;
-	if ((ret = getaddrinfo(argv[1], TCP_PORT, &hints, &servinfo)) != 0)
-	{
-		// log error
-		printf("getaddrinfo() call error: %s\n", gai_strerror(ret));
-		rtn_val = -1;
-		goto DONE;
-	}
-
-	// socket call
+	int poll_timeout_ms = 1000;
+	bool connection_accepted = false;
+	int loop_count = 0;
 	int sockfd;
-	errno = 0;
-	if ((sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol)) == -1)
-	{
-		printf("socket() call error: %s\n", strerror(errno));
-		rtn_val = -1;
-		goto DONE;
-	}
-	syslog(LOG_DEBUG, "***** Socket file set with descriptor: %d\n", sockfd);
 
-	// set SO_REUSEADDR on a socket to true (1):
-	int optval = 1;
-	socklen_t optlen;
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) != 0)
-	{
-		perror("setsockopt");
-	}
+	do {
+		printf("attempting connection to %s on port %s\n", target_ip[loop_count], TCP_PORT);
 
-	getsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, &optlen);
-	if (optval != 0)
-	{
-		printf("SO_REUSEADDR enabled on sockfd\n");
-	}
-
-	// connect() call
-	errno = 0;
-	if ((connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-	{
-		printf("connect()) call error: %s\n", strerror(errno));
-		rtn_val = -1;
-		close(sockfd);
-		goto DONE;
-	}
-
-	// Print address of connected server
-	char ipstr[INET_ADDRSTRLEN]; // space to hold the IPv4 string
-	inet_ntop(servinfo->ai_family, (struct sockaddr_in *)servinfo->ai_addr, ipstr, INET_ADDRSTRLEN);
-	syslog(LOG_DEBUG, "Client connected to %s\n", ipstr);
-	printf("Client connected to %s\n", ipstr);
-
-	/********** Daemon mode **********/
-
-/* 	// Daemon mode is invoked by argument 2 as '-d' when this application is invoked from command line
-	pid_t pid;
-	if (argc > 2) { // check to ensure we got a command line argument
-		if (!strncmp("-d", argv[2], 2))
-		{
-			printf("Daemon mode invoked.\n");
-
-			pid = fork();
-			if (pid == -1)
-			{ // fork error
-				perror("fork");
-				rtn_val = -1;
-				goto DONE;
-			}
-			else if (pid != 0)
-			{ // pid = 0 is child pid
-
-				// exit parent process
-				printf("Exiting parent process\n");
-				rtn_val = 0;
-				goto DONE;
-			}
+		if ( (sockfd = try_server_connect(target_ip[loop_count], TCP_PORT, poll_timeout_ms)) != -1) {
+			printf("*** IP addr %s accepted connection on port %s ***\n", target_ip[loop_count], TCP_PORT);	
+			connection_accepted = true;
 		}
-	} */
+
+		loop_count++;
+
+	} while ( (!connection_accepted) & ( loop_count <= (suf_end - suf_start) ));
+
+	sleep(2);
+
+	if ( !connection_accepted ) {
+		printf("failed to connect to any of the ip address / tcp ports in the list\n");
+	} else {
+		printf("connected. sockfd = %i\n", sockfd);
+	}
+
+	// set socket back to blocking
+    int flags = fcntl(sockfd, F_GETFL);
+    fcntl(sockfd, F_SETFL, flags & ~O_NONBLOCK);
 
 	/************************* INITIAL COMMS *************************/
 
@@ -240,9 +159,6 @@ int main(int argc, char *argv[])
 	{
 		goto DONE;
 	}
-
-	// todo: check for correct response to Q_IDN
-	//		if wrong goto done
 
 	printf("Recieved from server: %s\n", buffers->recv_buffer);
 
@@ -405,9 +321,9 @@ int main(int argc, char *argv[])
 DONE:
 
 	close(sockfd);
-	freeaddrinfo(servinfo); // free the linked list
+	// freeaddrinfo(servinfo); // free the linked list
 
-PARENT_DONE:		// DONE section for -d daemon mode
+// PARENT_DONE:		// DONE section for -d daemon mode
 
 	if (caught_signal == true)
 	{
