@@ -10,6 +10,11 @@ void signal_handler ( int signal_number );
 char *read_until_term(int fd, const char term, int *rtn_flag);
 ssize_t readLine(int fd, void *buffer, size_t n);
 int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber);
+int sock_recv_chars(int fd, struct Buffers *buf);
+int sock_recv_data(int fd, struct Buffers *buf);
+int sock_send_chars(int fd, struct Buffers *buf, char *msg);
+int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count);
+void calc_stats(float *buf, int count, struct AxisStats *ax_stats);
 
 /**********************************
 *   Globals
@@ -20,6 +25,205 @@ bool caught_signal;
 /////////////////////////////
 //		Function definitions
 /////////////////////////////
+
+
+/***********
+ * sock_recv_chars()
+ *      inputs: fd = the socket fd
+ *              *buf = ptr to struct Buffers
+ *
+ *      returns:
+ *              0   = successful receive
+ *              -1  = error in recv
+ */
+int sock_recv_chars(int fd, struct Buffers *buf)
+{
+
+    int sockfd = fd;
+    // clear the receive buffer and length
+    memset(buf->recv_buffer, 0, RCV_BUF_SIZE);
+    buf->recv_len = 0;
+
+    errno = 0;
+    int numbytes = recv(sockfd, buf->recv_buffer, RCV_BUF_SIZE, 0);
+    if (numbytes == -1)
+    {
+        printf("error in sock_recv_chars() in recv() call: %s\n", strerror(errno));
+        return -1;
+    }
+
+    buf->recv_len = numbytes;
+    buf->recv_buffer[numbytes] = '\0'; // null termination for string
+    return 0;
+}
+
+/***********
+ * sock_recv_data())
+ *      inputs: fd = the socket fd
+ *              *buf = ptr to struct Buffers
+ *
+ *      returns:
+ *              0   = successful receive
+ *              -1  = error in recv
+ */
+// todo: handle 'connection reset by peer
+int sock_recv_data(int fd, struct Buffers *buf)
+{
+
+    int sockfd = fd;
+    // clear the receive buffer and length
+    memset(buf->data_buffer, 0, DATA_BUF_SIZE * sizeof(float));
+    buf->data_count = 0;
+    buf->data_bytes = 0;
+
+    errno = 0;
+    int numbytes = recv(sockfd, buf->data_buffer, DATA_BUF_SIZE, 0);
+    if (numbytes == -1)
+    {
+        printf("error in sock_recv_data() in recv() call: %s\n", strerror(errno));
+        return -1;
+    }
+
+    buf->data_bytes = numbytes;
+    return 0;
+}
+
+/***********
+ * sock_send_chars())
+ *      inputs: fd = the socket fd
+ *              *buf = ptr to struct Buffers
+ *              * msg = ptr to message to send
+ *
+ *      returns:
+ *              0   = successful send
+ *              -1  = error in recv
+ */
+int sock_send_chars(int fd, struct Buffers *buf, char *msg)
+{
+
+    int sockfd = fd;
+    // clear the receive buffer
+    memset(buf->send_buffer, 0, SEND_BUF_SIZE);
+    strncpy(buf->send_buffer, msg, strlen(msg));
+    buf->send_len = sizeof(msg);
+
+    errno = 0;
+    int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
+    if (numbytes == -1)
+    {
+        printf("error in sock_send_chars() in send() call: %s\n", strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+/***********
+ * sock_send_data_req())
+ *      inputs: fd = the socket fd
+ *              *buf = ptr to struct Buffers
+ *              * msg = ptr to message to send
+ *              axis = the axis to sample (x=1, y=2, z=3)
+ *              count = number of samples
+ *
+ *      returns:
+ *              0   = successful send
+ *              -1  = error in recv
+ */
+int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int count)
+{
+
+    int sockfd = fd;
+    // clear the send buffer
+    memset(buf->send_buffer, 0, SEND_BUF_SIZE);
+
+    /*********
+     * build full message
+     * start with msg and add the suffix to it
+     * suffix is <axis>,<count>
+     *  Only 1 digit count supported
+     *
+     * Note that msg is a string literal
+     * so it has '\0'
+     * but strlen("DATA?") does not count it
+     *
+     * be careful using strlen in this section
+     */
+
+    // build the suffix
+    int suf_count = 3; // Only 1 digit count supported
+    char suf[suf_count];
+    suf[0] = axis + '0';
+    suf[1] = ',';
+    suf[2] = count + '0';
+    // printf("Requesting <axis> #%i with <count> %i\n", axis, count);
+
+    // now build the full message
+    int msg_count = strlen(msg);
+    int full_msg_count = msg_count + suf_count;
+    char full_msg[full_msg_count];
+    strncpy(full_msg, msg, msg_count); // does not include null terminator when copied
+    strncpy(full_msg + msg_count, suf, suf_count);
+    char str_full_msg[full_msg_count + 1];
+    strncpy(str_full_msg, full_msg, full_msg_count);
+    str_full_msg[full_msg_count] = '\0';
+    // printf("str_full_msg: %s\n", str_full_msg);
+
+    // build message
+    strncpy(buf->send_buffer, full_msg, strlen(full_msg));
+
+    // compute length
+    buf->send_len = sizeof(full_msg);
+
+    errno = 0;
+    int numbytes = send(sockfd, buf->send_buffer, buf->send_len, 0);
+    if (numbytes == -1)
+    {
+        printf("error in sock_esnd_chars() in send() call: %s\n", strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+/***********
+ * calc_stats()
+ *      inputs: *buf = array of values to be processed
+ *              count = number of values in the array
+ *              *ax_stats = struct that will hold stats
+ *
+ *      returns: nones\
+ */
+void calc_stats(float *buf, int count, struct AxisStats *ax_stats)
+{
+
+    // calculate mean
+    float mean_val = 0, sum = 0;
+    for (int i = 0; i < count; i++)
+    {
+        sum += buf[i];
+    }
+    mean_val = sum / count;
+    ax_stats->mean = mean_val;
+    // printf("mean_val = %.4f\n", ax_stats->mean);
+
+    // calculate standard deviation
+    float stddev = 0;
+    float temp[count];
+    float temp_sum = 0;
+    for (int i = 0; i < count; i++)
+    {
+        temp[i] = buf[i] - mean_val;
+        temp[i] = temp[i] * temp[i];
+        temp_sum += temp[i];
+    }
+    stddev = temp_sum / (count - 1);
+    stddev = sqrtf(stddev);
+    ax_stats->stddev = stddev;
+    // printf("stddev = %.4f\n", stddev);
+
+    return;
+}
 
 int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber) {
 

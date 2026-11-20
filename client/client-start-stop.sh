@@ -17,7 +17,8 @@ case $1 in
 		#start-stop-daemon --start --name aesd_client --startas /home/ryan/projects/ecea5307-final-project/client/aesd_client -- 192.168.86.30 -d
 
 		# embedded system binay location
-		start-stop-daemon --start --name aesd_client --startas /usr/bin/aesd_client -- 192.168.86.30 -d
+		#start-stop-daemon --start --name aesd_client --startas /usr/bin/aesd_client -- 192.168.86.30 -d
+		start-stop-daemon --start --name aesd_client --startas /usr/bin/aesd_client -- 192.168.86.26 -d
 		;;
 	stop)
 		echo "Stopping client application daemon"
