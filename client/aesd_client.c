@@ -17,15 +17,16 @@
  *	Defines
  **********************************/
 
-#define TCP_PORT "4242"
+#define TCP_PORT 			"4242"
+#define IP_PREFIX 			"192.168.86."
+#define IP_SUFFIX_START		25
+#define IP_SUFFIX_END		35
 #define BASELINE_REQ_COUNT 	100
 #define REQ_COUNT_10 		10
 #define REQ_COUNT_25 		25
 #define REQ_COUNT_50 		50
 #define LOOP_REQ_COUNT 		REQ_COUNT_25
-#define IP_PREFIX 			"192.168.86."
-#define IP_SUFFIX_START		25
-#define IP_SUFFIX_END		35
+
 
 /**********************************
  *	Globals
@@ -40,9 +41,16 @@ int g_passive_mon_sleep_secs = 10; // while loop sleep time for when machine is 
 int g_active_mon_sleep_secs = 10;  // while loop sleep time for when machine is ON
 bool D_RUN = false;				   // 'dryer running' flag
 
+char *textbelt_script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
+char *phonenumber = "9137355704";
+char *dryer_start_msg = "Dryer started ";
+char *dryer_stop_msg = "Dryer stopped ";
+char *now_str;
+char text_msg[100];		
+
+
 struct Buffers buf = {0};
 struct Buffers *buffers = &buf;
-
 
 /**********************************
  *	Main
@@ -162,21 +170,17 @@ int main(int argc, char *argv[])
 
 	printf("Recieved from server: %s\n", buffers->recv_buffer);
 
-	/**************** SET INITIAL VIBE THRESHOLD FOR SYSTEM OFF STATE  ****************/
-
-	/****
-	 * todo: consider hardcoded threshold to verify that system
-	 * is off before proceeding with initialization
-	 */
+	/**************** SET INITIAL VIBE THRESHOLD FOR SYSTEM ****************/
 
 	// setup axis stats for baseline here
 	struct AxisStats base_z_stats = {0};
 	struct AxisStats *base_z_axis = &base_z_stats;
+	int axis = 3;		// z-axis
 
+/*
 	// notify user of init process, don't touch system
 	printf("*** Establishing baseline stats ****\n");
 	printf("*** Set system on unmoving vibration target\n");
-	int axis = 3;
 	float baseline_recv_values[BASELINE_REQ_COUNT];
 	for (int i = 0; i < BASELINE_REQ_COUNT; i++)
 	{
@@ -196,12 +200,17 @@ int main(int argc, char *argv[])
 	}
 
 	calc_stats(baseline_recv_values, BASELINE_REQ_COUNT, base_z_axis);
+	*/
+
+	// assign hardcoded vibration stats based on experimental data
+	base_z_axis->mean = 1.035;
+	base_z_axis->stddev = 0.015;
 	printf("baseline mean_val = %.4fg\n", base_z_axis->mean);
 	printf("baseline stddev = %.4fg\n", base_z_axis->stddev);
 	syslog(LOG_DEBUG, "baseline mean_val = %.4fg\n", base_z_axis->mean);
 	syslog(LOG_DEBUG, "baseline stddev = %.4fg\n", base_z_axis->stddev);
 
-	// establish 3 sigma stddev threshold here
+	// establish stddev threshold
 	float baseline_stddev_ths = 3 * base_z_axis->stddev;
 	printf("stddev threshold set to %.4fg\n", baseline_stddev_ths);
 	syslog(LOG_DEBUG, "stddev threshold set to %.4fg\n", baseline_stddev_ths);
@@ -288,7 +297,12 @@ int main(int argc, char *argv[])
 				D_RUN = true;
 				printf("******* D_RUN flag set to true\n");
 				loop_sleep_secs = g_active_mon_sleep_secs;
-				// todo send textbelt call here ... dryer started
+				// send textbelt call here ... dryer started
+				now = time(NULL);
+				now_str = ctime(&now);
+				strncpy(text_msg, dryer_start_msg, strlen(dryer_start_msg));
+				strncpy(text_msg + strlen(dryer_start_msg), now_str, strlen(now_str));
+				exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
 			}
 			else
 			{
@@ -301,13 +315,17 @@ int main(int argc, char *argv[])
 			if (D_RUN)
 			{
 				D_RUN = false;
-				printf("******* D_RUN flag set to false\n\\");
 				printf("***************** Dryer stopped\n");
 				syslog(LOG_DEBUG, "Dryer stopped\n");
 				now = time(NULL);
 				syslog(LOG_DEBUG, "***** Current time: %s\n\n\n", ctime(&now));
 				loop_sleep_secs = g_passive_mon_sleep_secs;
-				// todo send textbelt call here ... dryer done
+				// send textbelt call here ... dryer done
+				now = time(NULL);
+				now_str = ctime(&now);
+				strncpy(text_msg, dryer_stop_msg, strlen(dryer_stop_msg));
+				strncpy(text_msg + strlen(dryer_stop_msg), now_str, strlen(now_str));
+				exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
 			}
 		}
 
