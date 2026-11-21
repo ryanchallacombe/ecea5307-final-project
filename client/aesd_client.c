@@ -16,7 +16,12 @@
 /**********************************
  *	Defines
  **********************************/
-#define SEND_TEXTBELT_REQ	0 		// set to 0 if debugging and don't want to send texts
+// set to 0 if debugging and don't want to send texts
+#define SEND_TEXTBELT_REQ				0			
+// how many samples to request from the pico	
+#define LOOP_REQ_COUNT 					REQ_COUNT_10
+// confirm (debounce) state changes this many times
+#define STATE_CHANGE_DEBOUNCE_COUNT		3
 
 /**********************************
  *	Globals
@@ -29,6 +34,7 @@ char *Q_DATA = "DATA?";
 size_t numbytes;
 int g_passive_mon_sleep_secs = 10; // while loop sleep time for when machine is OFF
 int g_active_mon_sleep_secs = 10;  // while loop sleep time for when machine is ON
+int g_debounce_sleep_secs = 2;
 bool D_RUN = false;				   // 'dryer running' flag
 
 // textbelt / messaging
@@ -145,6 +151,8 @@ int main(int argc, char *argv[])
 
 	if ( !connection_accepted ) {
 		printf("failed to connect to any of the ip address / tcp ports in the list\n");
+		rtn_val = -1;
+		goto DONE;
 	} else {
 		printf("connected. sockfd = %i\n", sockfd);
 	}
@@ -170,17 +178,9 @@ int main(int argc, char *argv[])
 
 	/**************** SET INITIAL VIBE THRESHOLD FOR SYSTEM ****************/
 
-	// setup axis stats for baseline here
-	// todo - do i even need this base_z_stats??
-	struct AxisStats base_z_stats = {0};
-	struct AxisStats *base_z_axis = &base_z_stats;
-	//int axis = 3;		// z-axis
-
-	// assign hardcoded vibration stats based on experimental data
-	base_z_axis->mean = baseline_z_mean;
-	base_z_axis->stddev = baseline_z_stddev;
-	syslog(LOG_DEBUG, "baseline mean_val = %.4fg\n", base_z_axis->mean);
-	syslog(LOG_DEBUG, "baseline stddev = %.4fg\n", base_z_axis->stddev);
+	// report hardcoded vibration stats based on experimental data
+	syslog(LOG_DEBUG, "baseline mean_val = %.4fg\n", baseline_z_mean);
+	syslog(LOG_DEBUG, "baseline stddev = %.4fg\n", baseline_z_stddev);
 	syslog(LOG_DEBUG, "stddev threshold =  %.4fg\n", baseline_stddev_ths);
 	/* establish an out-of-bounds threshold to use for filtering out extreme events */
 	/* This filters out the closing of the dryer door for example */
@@ -194,110 +194,63 @@ int main(int argc, char *argv[])
 	struct AxisStats *z_axis = &z_stats;
 	z_axis->axis = 3;
 
-
 	// setup vars for loop
-
-	//float recv_values[LOOP_REQ_COUNT]; // buffer for storing received vibe data
 	int loop_sleep_secs = g_passive_mon_sleep_secs;
-	//bool OOB_flag = false;
 
 	while (!caught_signal)
 	{
-		/*******
-		 * Get data and process stats
-		 * check against baseline stddev threshold
-		 */
-		printf("****************\n");
-		printf("Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, z_axis->axis);
-		syslog(LOG_DEBUG, "****************\n");
-		syslog(LOG_DEBUG, "Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, z_axis->axis);
-		now = time(NULL);
-		syslog(LOG_DEBUG, "***** Current time: %s\n", ctime(&now));
-		/*
-		do
+
+		/**************** UPDATE VIBE STATS  ****************/
+		int debounce_counter = 0;
+		do 
 		{
 			printf("****************\n");
-			printf("Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, axis);
+			printf("Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, z_axis->axis);
+			printf("debounce_counter = %i\n", debounce_counter);
 			syslog(LOG_DEBUG, "****************\n");
-			syslog(LOG_DEBUG, "Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, axis);
+			syslog(LOG_DEBUG, "Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, z_axis->axis);
+			syslog(LOG_DEBUG, "debounce_counter = %i\n", debounce_counter);
 			now = time(NULL);
 			syslog(LOG_DEBUG, "***** Current time: %s\n", ctime(&now));
-			for (int i = 0; i < LOOP_REQ_COUNT; i++)
-			{
-				OOB_flag = false;
 
-				// query for data
-				if ((rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1)) == -1)
-				{
-					goto DONE;
-				}
-
-				// recieve
-				if ((rtn_val = sock_recv_data(sockfd, buffers)) == -1)
-				{
-					goto DONE;
-				}
-				// printf("loop i = %i, received %i bytes\n", i, buffers->data_bytes);
-				recv_values[i] = *buffers->data_buffer;
-				// printf("Recieved: %.4f\n", recv_values[i]);
-
-				if (recv_values[i] > OOB_ths)
-				{
-					printf("\n***OOB value received: %.4fg\n\n", recv_values[i]);
-					OOB_flag = true;
-					break;
-				}
+			if (update_axis_vibe_stats(z_axis, LOOP_REQ_COUNT, sockfd, buffers) != 0) {
+				printf("error in update_axis_vibe_stats()\n");
+				rtn_val = -1;
+				goto DONE;
 			}
-		} while (OOB_flag);
-		*/
 
-		if (update_axis_vibe_stats(z_axis, LOOP_REQ_COUNT, sockfd, buffers) != 0) {
-			printf("error in update_axis_vibe_stats()\n");
-			rtn_val = -1;
-			goto DONE;
-		}
-		// calc_stats(recv_values, LOOP_REQ_COUNT, z_axis);
-		printf("mean_val = %.4f\n", z_axis->mean);
-		printf("stddev = %.4f\n", z_axis->stddev);
-		syslog(LOG_DEBUG, "mean_val = %.4f\n", z_axis->mean);
-		syslog(LOG_DEBUG, "stddev = %.4f\n", z_axis->stddev);
-		
+			// report values 
+			printf("mean_val = %.4f\n", z_axis->mean);
+			printf("stddev = %.4f\n", z_axis->stddev);
+			syslog(LOG_DEBUG, "mean_val = %.4f\n", z_axis->mean);
+			syslog(LOG_DEBUG, "stddev = %.4f\n", z_axis->stddev);
 
-		/**************** THRESHOLD CHECK  AND ACTIONS ****************/
-		if (z_stats.stddev > baseline_stddev_ths)
-		{
-			printf("**** stddev %.4fg exceeds threshold %.4fg ****\n\n", z_axis->stddev, baseline_stddev_ths);
-
-			if (!D_RUN)
-			{
-				D_RUN = true;
-				printf("******* D_RUN flag set to true\n");
-				loop_sleep_secs = g_active_mon_sleep_secs;
-				// send textbelt call here ... dryer started
-				now = time(NULL);
-				now_str = ctime(&now);
-				strncpy(text_msg, dryer_start_msg, strlen(dryer_start_msg));
-				strncpy(text_msg + strlen(dryer_start_msg), now_str, strlen(now_str));
-				if (SEND_TEXTBELT_REQ) {
-					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);	
-				}
+			// if running, but data indicates it is not
+			if ( (D_RUN) & (z_stats.stddev <= baseline_stddev_ths) ) {
+				debounce_counter++;
+				sleep(g_debounce_sleep_secs);
+			} else
+			// if not running, but data inidicates it is running
+			if ( (!D_RUN) & (z_stats.stddev > baseline_stddev_ths) ) {
+				printf("**** stddev %.4fg exceeds threshold %.4fg ****\n\n", z_axis->stddev, baseline_stddev_ths);
+				debounce_counter++;
+				sleep(g_debounce_sleep_secs);
+			} else { 	
+				// data does not indicate a state change
+				debounce_counter = 0;
 			}
-			else
-			{
-				printf("Dryer is still running\n");
-				syslog(LOG_DEBUG, "Dryer is still running\n");
-			}
-		}
-		else
-		{
-			if (D_RUN)
-			{
+
+			
+
+		} while ((debounce_counter > 0) & (debounce_counter < STATE_CHANGE_DEBOUNCE_COUNT));
+
+		// Change state if needed
+		if (debounce_counter == STATE_CHANGE_DEBOUNCE_COUNT) {
+			
+			if (D_RUN) {		// running but state needs to change to not running
 				D_RUN = false;
-				printf("***************** Dryer stopped\n");
-				syslog(LOG_DEBUG, "Dryer stopped\n");
-				now = time(NULL);
-				syslog(LOG_DEBUG, "***** Current time: %s\n\n\n", ctime(&now));
 				loop_sleep_secs = g_passive_mon_sleep_secs;
+
 				// send textbelt call here ... dryer done
 				now = time(NULL);
 				now_str = ctime(&now);
@@ -306,7 +259,37 @@ int main(int argc, char *argv[])
 				if (SEND_TEXTBELT_REQ) {
 					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
 				}
+
+				printf("***************** Dryer stopped\n");
+				syslog(LOG_DEBUG, "***************** Dryer stopped\n");
+				now = time(NULL);
+				syslog(LOG_DEBUG, "***** Current time: %s\n\n\n", ctime(&now));	
+
+			} else {			// not running but state needs to change to running	
+				D_RUN = true;
+				loop_sleep_secs = g_active_mon_sleep_secs;
+
+				// send textbelt call here ... dryer started
+				now = time(NULL);
+				now_str = ctime(&now);
+				strncpy(text_msg, dryer_start_msg, strlen(dryer_start_msg));
+				strncpy(text_msg + strlen(dryer_start_msg), now_str, strlen(now_str));
+				if (SEND_TEXTBELT_REQ) {
+					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);	
+				}
+
+				printf("******* Dryer started\n");
+				syslog(LOG_DEBUG, "***************** Dryer started\n");
+				now = time(NULL);
+				syslog(LOG_DEBUG, "***** Current time: %s\n\n\n", ctime(&now));	
 			}
+
+		} else {
+			// not a stand change 
+			if (D_RUN) {
+				printf("Dryer is still running\n");
+				syslog(LOG_DEBUG, "Dryer is still running\n");
+			} 
 		}
 
 		/**************** SLEEP ****************/

@@ -33,7 +33,6 @@
 #define REQ_COUNT_10 		10
 #define REQ_COUNT_25 		25
 #define REQ_COUNT_50 		50
-#define LOOP_REQ_COUNT 		REQ_COUNT_25
 
 struct Buffers
 {

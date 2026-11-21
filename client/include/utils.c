@@ -32,8 +32,12 @@ extern float OOB_ths;
 /////////////////////////////
 
 /***********
-    get_dryer_run_status()
-    does_vibe_stddev_exceed_ths()
+    update_axis_vibe_stats()
+    inputs: 
+        *axis_stats = ptr to struct AxisStats which will be updated
+        samples = number of samples to get from the pico
+        fd = socket file descriptor
+        *buf = ptr to struct Buffers which are used to buffer data from and to the pico
 
     returns:
             1 = stddev of vibration measurements exceeds threshold
@@ -49,7 +53,7 @@ extern float OOB_ths;
 int update_axis_vibe_stats(struct AxisStats *axis_stats, int samples, int fd, struct Buffers *buf) 
 {   
     bool OOB_flag = false;
-    float recv_values[LOOP_REQ_COUNT];
+    float recv_values[samples];
     int rtn_val = 0;
 
     do
