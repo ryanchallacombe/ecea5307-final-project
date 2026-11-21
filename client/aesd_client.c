@@ -16,17 +16,7 @@
 /**********************************
  *	Defines
  **********************************/
-
-#define TCP_PORT 			"4242"
-#define IP_PREFIX 			"192.168.86."
-#define IP_SUFFIX_START		25
-#define IP_SUFFIX_END		35
-#define BASELINE_REQ_COUNT 	100
-#define REQ_COUNT_10 		10
-#define REQ_COUNT_25 		25
-#define REQ_COUNT_50 		50
-#define LOOP_REQ_COUNT 		REQ_COUNT_25
-
+#define SEND_TEXTBELT_REQ	0 		// set to 0 if debugging and don't want to send texts
 
 /**********************************
  *	Globals
@@ -41,6 +31,7 @@ int g_passive_mon_sleep_secs = 10; // while loop sleep time for when machine is 
 int g_active_mon_sleep_secs = 10;  // while loop sleep time for when machine is ON
 bool D_RUN = false;				   // 'dryer running' flag
 
+// textbelt / messaging
 char *textbelt_script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
 char *phonenumber = "9137355704";
 char *dryer_start_msg = "Dryer started ";
@@ -48,9 +39,16 @@ char *dryer_stop_msg = "Dryer stopped ";
 char *now_str;
 char text_msg[100];		
 
-
+// buffers for send and receive
 struct Buffers buf = {0};
 struct Buffers *buffers = &buf;
+
+// setup baseline stats and thresholds
+// alternatively could collect data with system at rest and compute / assign these as part of the application
+float baseline_z_mean = 1.035;
+float baseline_z_stddev = 0.02;
+float baseline_stddev_ths = 0.06;			// 3 * baseline_z_stddev;
+float OOB_ths = 2.5;					// baseline_z_mean + 100 * baseline_z_stddev;
 
 /**********************************
  *	Main
@@ -173,70 +171,35 @@ int main(int argc, char *argv[])
 	/**************** SET INITIAL VIBE THRESHOLD FOR SYSTEM ****************/
 
 	// setup axis stats for baseline here
+	// todo - do i even need this base_z_stats??
 	struct AxisStats base_z_stats = {0};
 	struct AxisStats *base_z_axis = &base_z_stats;
-	int axis = 3;		// z-axis
-
-/*
-	// notify user of init process, don't touch system
-	printf("*** Establishing baseline stats ****\n");
-	printf("*** Set system on unmoving vibration target\n");
-	float baseline_recv_values[BASELINE_REQ_COUNT];
-	for (int i = 0; i < BASELINE_REQ_COUNT; i++)
-	{
-		// query for data
-		if ((rtn_val = sock_send_data_req(sockfd, buffers, Q_DATA, axis, 1)) == -1)
-		{
-			goto DONE;
-		}
-
-		// recieve
-		if ((rtn_val = sock_recv_data(sockfd, buffers)) == -1)
-		{
-			goto DONE;
-		}
-		baseline_recv_values[i] = *buffers->data_buffer;
-		// printf("Recieved: %.4f\n", baseline_recv_values[i]);
-	}
-
-	calc_stats(baseline_recv_values, BASELINE_REQ_COUNT, base_z_axis);
-	*/
+	//int axis = 3;		// z-axis
 
 	// assign hardcoded vibration stats based on experimental data
-	base_z_axis->mean = 1.035;
-	base_z_axis->stddev = 0.015;
-	printf("baseline mean_val = %.4fg\n", base_z_axis->mean);
-	printf("baseline stddev = %.4fg\n", base_z_axis->stddev);
+	base_z_axis->mean = baseline_z_mean;
+	base_z_axis->stddev = baseline_z_stddev;
 	syslog(LOG_DEBUG, "baseline mean_val = %.4fg\n", base_z_axis->mean);
 	syslog(LOG_DEBUG, "baseline stddev = %.4fg\n", base_z_axis->stddev);
-
-	// establish stddev threshold
-	float baseline_stddev_ths = 3 * base_z_axis->stddev;
-	printf("stddev threshold set to %.4fg\n", baseline_stddev_ths);
-	syslog(LOG_DEBUG, "stddev threshold set to %.4fg\n", baseline_stddev_ths);
-
-	/***
-	 * establish an out-of-bounds threshold to use for filtering out extreme events
-	 * any data captures with 1 value above this threshold must be redone
-	 * This filters out the closing of the dryer door
-	 */
-	int oob_sigma_scalar = 100;
-	float OOB_ths = base_z_axis->mean + oob_sigma_scalar * base_z_axis->stddev;
-	printf("OOB stddev threshold set to %i std deviations: %.4fg\n", oob_sigma_scalar, OOB_ths);
-
-	printf("*** Baseline setup completed ****\n\n\n");
+	syslog(LOG_DEBUG, "stddev threshold =  %.4fg\n", baseline_stddev_ths);
+	/* establish an out-of-bounds threshold to use for filtering out extreme events */
+	/* This filters out the closing of the dryer door for example */
+	syslog(LOG_DEBUG, "OOB stddev threshold set to: %.4fg\n", OOB_ths);
+	syslog(LOG_DEBUG, "*** Baseline setup completed ****\n\n\n");
 
 	/**************** LOOP  ****************/
 
 	// setup axis stats for loop here
 	struct AxisStats z_stats = {0};
 	struct AxisStats *z_axis = &z_stats;
+	z_axis->axis = 3;
+
 
 	// setup vars for loop
 
-	float recv_values[LOOP_REQ_COUNT]; // buffer for storing received vibe data
+	//float recv_values[LOOP_REQ_COUNT]; // buffer for storing received vibe data
 	int loop_sleep_secs = g_passive_mon_sleep_secs;
-	bool OOB_flag = false;
+	//bool OOB_flag = false;
 
 	while (!caught_signal)
 	{
@@ -244,7 +207,13 @@ int main(int argc, char *argv[])
 		 * Get data and process stats
 		 * check against baseline stddev threshold
 		 */
-
+		printf("****************\n");
+		printf("Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, z_axis->axis);
+		syslog(LOG_DEBUG, "****************\n");
+		syslog(LOG_DEBUG, "Querying for %i samples on axis %i\n", LOOP_REQ_COUNT, z_axis->axis);
+		now = time(NULL);
+		syslog(LOG_DEBUG, "***** Current time: %s\n", ctime(&now));
+		/*
 		do
 		{
 			printf("****************\n");
@@ -280,12 +249,19 @@ int main(int argc, char *argv[])
 				}
 			}
 		} while (OOB_flag);
+		*/
 
-		calc_stats(recv_values, LOOP_REQ_COUNT, z_axis);
+		if (update_axis_vibe_stats(z_axis, LOOP_REQ_COUNT, sockfd, buffers) != 0) {
+			printf("error in update_axis_vibe_stats()\n");
+			rtn_val = -1;
+			goto DONE;
+		}
+		// calc_stats(recv_values, LOOP_REQ_COUNT, z_axis);
 		printf("mean_val = %.4f\n", z_axis->mean);
 		printf("stddev = %.4f\n", z_axis->stddev);
 		syslog(LOG_DEBUG, "mean_val = %.4f\n", z_axis->mean);
 		syslog(LOG_DEBUG, "stddev = %.4f\n", z_axis->stddev);
+		
 
 		/**************** THRESHOLD CHECK  AND ACTIONS ****************/
 		if (z_stats.stddev > baseline_stddev_ths)
@@ -302,7 +278,9 @@ int main(int argc, char *argv[])
 				now_str = ctime(&now);
 				strncpy(text_msg, dryer_start_msg, strlen(dryer_start_msg));
 				strncpy(text_msg + strlen(dryer_start_msg), now_str, strlen(now_str));
-				exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
+				if (SEND_TEXTBELT_REQ) {
+					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);	
+				}
 			}
 			else
 			{
@@ -325,7 +303,9 @@ int main(int argc, char *argv[])
 				now_str = ctime(&now);
 				strncpy(text_msg, dryer_stop_msg, strlen(dryer_stop_msg));
 				strncpy(text_msg + strlen(dryer_stop_msg), now_str, strlen(now_str));
-				exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
+				if (SEND_TEXTBELT_REQ) {
+					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
+				}
 			}
 		}
 
@@ -339,9 +319,6 @@ int main(int argc, char *argv[])
 DONE:
 
 	close(sockfd);
-	// freeaddrinfo(servinfo); // free the linked list
-
-// PARENT_DONE:		// DONE section for -d daemon mode
 
 	if (caught_signal == true)
 	{

@@ -1,7 +1,5 @@
 #include "utils.h"
 
-int ip_addr_char_count = IP_ADDR_CHAR_COUNT;
-
 /////////////////////////////
 //		Function prototypes
 /////////////////////////////
@@ -18,16 +16,74 @@ int sock_send_data_req(int fd, struct Buffers *buf, char *msg, int axis, int cou
 void calc_stats(float *buf, int count, struct AxisStats *ax_stats);
 int try_server_connect(char *server_ip, char *tcp_port, int timeout_ms);
 void build_ipv4_addr_array(char *pfx, int suf_start, int suf_end, char target_ip[][IP_ADDR_CHAR_COUNT+1]);
+int update_axis_vibe_stats(struct AxisStats *axis_stats, int samples, int fd, struct Buffers *buf);
 
 /**********************************
 *   Globals
 **********************************/
 
 bool caught_signal;
+int ip_addr_char_count = IP_ADDR_CHAR_COUNT;
+extern char *Q_DATA;
+extern float OOB_ths;
 
 /////////////////////////////
 //		Function definitions
 /////////////////////////////
+
+/***********
+    get_dryer_run_status()
+    does_vibe_stddev_exceed_ths()
+
+    returns:
+            1 = stddev of vibration measurements exceeds threshold
+            0 = stddev of vibration measurements is below threshold
+            -1 = error / function failure
+
+    update_axis_vibe_stats()
+
+    returns:
+            0 = function successfully update stats for axis
+            -1 = error / function failure
+*/
+int update_axis_vibe_stats(struct AxisStats *axis_stats, int samples, int fd, struct Buffers *buf) 
+{   
+    bool OOB_flag = false;
+    float recv_values[LOOP_REQ_COUNT];
+    int rtn_val = 0;
+
+    do
+    {
+        for (int i = 0; i < samples; i++)
+        {
+            OOB_flag = false;
+            // query for data
+            if ((rtn_val = sock_send_data_req(fd, buf, Q_DATA, axis_stats->axis, 1)) == -1)
+            {
+                return rtn_val;
+            }
+
+            // recieve
+            if ((rtn_val = sock_recv_data(fd, buf)) == -1)
+            {
+                return rtn_val;
+            }
+            // printf("loop i = %i, received %i bytes\n", i, buffers->data_bytes);
+            recv_values[i] = *buf->data_buffer;
+            // printf("Recieved: %.4f\n", recv_values[i]);
+            if (recv_values[i] > OOB_ths)
+            {
+                printf("\n***OOB value received: %.4fg\n\n", recv_values[i]);
+                OOB_flag = true;
+                break;
+            }
+        }
+    } while (OOB_flag);
+
+    calc_stats(recv_values, samples, axis_stats);
+
+    return rtn_val;
+}
 
 
 /***********
