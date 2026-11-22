@@ -14,11 +14,10 @@ case $1 in
 		echo "Starting client application daemon"
 		
 		# native system binary location
-		#start-stop-daemon --start --name aesd_client --startas /home/ryan/projects/ecea5307-final-project/client/aesd_client -- 192.168.86.30 -d
+		#start-stop-daemon --start --name aesd_client --startas /home/ryan/projects/ecea5307-final-project/client/aesd_client -- -d
 
 		# embedded system binay location
-		#start-stop-daemon --start --name aesd_client --startas /usr/bin/aesd_client -- 192.168.86.30 -d
-		start-stop-daemon --start --name aesd_client --startas /usr/bin/aesd_client -- 192.168.86.26 -d
+		start-stop-daemon --start --name aesd_client --startas /usr/bin/aesd_client -- -d
 		;;
 	stop)
 		echo "Stopping client application daemon"
