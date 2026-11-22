@@ -22,6 +22,7 @@ int update_axis_vibe_stats(struct AxisStats *axis_stats, int samples, int fd, st
 bool caught_signal;
 int ip_addr_char_count = IP_ADDR_CHAR_COUNT;
 extern char *Q_DATA;
+extern char *Q_IDN;
 extern float OOB_ths;
 
 /////////////////////////////
@@ -159,6 +160,13 @@ int try_server_connect(char *server_ip, char *tcp_port, int timeout_ms) {
     } else {
         // unexpected poll() event occurred
         close(sockfd);
+        return -1;
+    }
+    
+    int numbytes = send(sockfd, Q_IDN, strlen(Q_IDN), 0);
+    if (numbytes == -1)
+    {
+        printf("error in try_server_connect() in send() call: %s\n", strerror(errno));
         return -1;
     }
 
