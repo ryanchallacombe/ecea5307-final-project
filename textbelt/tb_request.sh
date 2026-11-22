@@ -16,7 +16,7 @@ fi
 MSG=$1
 PHONE=$2
 
-APIKEY=$(cat /home/ryan/projects/ecea5307-final-project/textbelt/text_belt_api_key.txt)
+APIKEY=$(cat include/text_belt_api_key.txt)
 
 curl -X POST https://textbelt.com/text \
      --data-urlencode phone=$PHONE \

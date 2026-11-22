@@ -17,7 +17,7 @@
  *	Defines
  **********************************/
 // set to 0 if debugging and don't want to send texts
-#define SEND_TEXTBELT_REQ				0			
+#define SEND_TEXTBELT_REQ				1			
 // how many samples to request from the pico	
 #define LOOP_REQ_COUNT 					REQ_COUNT_10
 // confirm (debounce) state changes this many times
@@ -38,7 +38,8 @@ int g_debounce_sleep_secs = 2;
 bool D_RUN = false;				   // 'dryer running' flag
 
 // textbelt / messaging
-char *textbelt_script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
+//char *textbelt_script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
+char *textbelt_script_fullpath = "include/tb_request.sh";
 char *phonenumber = "9137355704";
 char *dryer_start_msg = "Dryer started ";
 char *dryer_stop_msg = "Dryer stopped ";

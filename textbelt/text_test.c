@@ -15,7 +15,7 @@ This is a C wrapper for a bash script which sends a request to the textbelt api
 #include <errno.h>
 #include "textbelt_utils.h"
 
-char *script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
+char *script_fullpath = "tb_request.sh";
 char *msg = "Hello World from C wrapper!!!";
 char *phonenumber = "9137355704";
 
