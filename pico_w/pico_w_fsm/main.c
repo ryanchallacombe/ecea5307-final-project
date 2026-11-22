@@ -13,28 +13,14 @@
 #include "include/wifi_info.h"
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
-#include <time.h>
-
-/**
- * Todos:
- * reset send_len and others everytime memset is done
- * need to be consistent about when buffer(s) is cleared
- * 
- * clean up tcp functions
- * 
- * remove unused FSM states
- */
 
 /**********************************
  *  FSM STATES
 **********************************/
 enum FSM_State : uint16_t
 {
-    S_INITIALIZE,
-    S_SERVER_SETUP,
     S_LIS3DH_SETUP,
     S_LOOP,
-    S_LIS3DH_INTERRUPT,
     S_ERROR
 };
 
@@ -51,12 +37,7 @@ enum FSM_State : uint16_t
  *  GLOBALS
 **********************************/
 enum FSM_State currentState, nextState;
-
-bool s_initialize_fail = false;
-bool s_server_setup_fail = false;
 bool s_lis3dh_setup_fail = false;
-bool s_lis3dh_interrupt_fail = false;
-
 int loop_sleep_ms = 100;
 
 // Define the queries from the client
@@ -120,7 +101,6 @@ void uponEnter( const enum FSM_State fsm_state, void *arg );
 void updateStateMachine( const enum FSM_State fsm_state );
 void uponExit( const enum FSM_State fsm_state );
 const char *stateToString ( const enum FSM_State fsm_state );
-void gpio_callback( uint gpio, uint32_t events );
 static TCP_SERVER_T* tcp_server_init(void);
 static bool tcp_server_open(void *arg);
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err);
@@ -188,7 +168,7 @@ int main()
         return -1;
     }
 
-    currentState = nextState = S_INITIALIZE;
+    currentState = nextState = S_LIS3DH_SETUP;
 
     uponEnter(currentState, tcp_state);
 
@@ -226,14 +206,6 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
 
     switch (fsm_state) {
-        case S_INITIALIZE:
-        {
-            break;
-        }
-        case S_SERVER_SETUP:
-        {
-            break;
-        }
         case S_LIS3DH_SETUP:
         {
             /**********************************
@@ -252,9 +224,6 @@ void uponEnter( const enum FSM_State fsm_state, void *arg ) {
         case S_LOOP:
             break;
 
-        case S_LIS3DH_INTERRUPT:
-            break;
-
         case S_ERROR:
             // free tcp state
             if (tcp_state) {
@@ -271,28 +240,6 @@ void updateStateMachine( const enum FSM_State fsm_state ) {
     //printf("updateStateMachine fsm_state: %s\n", stateToString(fsm_state));
 
     switch (fsm_state) {
-        case S_INITIALIZE:
-        {
-            if (s_initialize_fail)      // case no longer needed
-            {
-                nextState = S_ERROR;
-            }
-            else
-            {
-                nextState = S_SERVER_SETUP;
-            }
-            break;
-        }
-        case S_SERVER_SETUP:
-        {
-            if (s_server_setup_fail) {      // case no longer needed
-                nextState = S_ERROR;
-            }    
-            else {
-                nextState = S_LIS3DH_SETUP;
-            }
-            break;
-        }
         case S_LIS3DH_SETUP:
         {
             if (s_lis3dh_setup_fail)
@@ -307,16 +254,6 @@ void updateStateMachine( const enum FSM_State fsm_state ) {
             cyw43_arch_poll();
             break;
         }
-        case S_LIS3DH_INTERRUPT:
-            if (s_lis3dh_interrupt_fail)
-            {
-                nextState = S_ERROR;
-            }
-            else
-            {
-                nextState = S_LOOP;
-            }
-            break;
         case S_ERROR:
             break;
         default:
@@ -328,18 +265,9 @@ void uponExit( const enum FSM_State fsm_state ) {
     printf("Exiting fsm_state: %s\n", stateToString(fsm_state));
 
     switch (fsm_state) {
-        case S_INITIALIZE:
-            // nothing to do on exit
-            break;
-        case S_SERVER_SETUP:
-            // nothing to do on exit
-            break;
         case S_LIS3DH_SETUP:
             break;
         case S_LOOP:
-            // nothing to do on exit
-            break;
-        case S_LIS3DH_INTERRUPT:
             // nothing to do on exit
             break;
         case S_ERROR:
@@ -354,23 +282,14 @@ const char *stateToString ( const enum FSM_State fsm_state ) {
     const char *stateStr; 
 
     switch (fsm_state) {
-        case S_INITIALIZE:
-            stateStr = "S_INITIALIZE";
-            break;
         case S_LOOP:
             stateStr = "S_LOOP";
             break;
         case S_ERROR:
             stateStr = "S_ERROR";
             break;
-        case S_LIS3DH_INTERRUPT:
-            stateStr = "S_LIS3DH_INTERRUPT";
-            break;
         case S_LIS3DH_SETUP:
             stateStr = "S_LIS3DH_SETUP";
-            break;
-        case S_SERVER_SETUP:
-            stateStr = "S_SERVER_SETUP";
             break;
         default:
             break;
@@ -394,7 +313,6 @@ void lis3dh_init() {
     buf[0] = CTRL_REG_4;
     buf[1] = SET_CTRL_REG_4;          
     i2c_write_blocking(i2c_default, ADDRESS, buf, 2, false);
-
 }
 
 void lis3dh_calc_value(uint16_t raw_value, float *final_value, bool isAccel) {
@@ -456,24 +374,18 @@ void lis3dh_read_data(uint8_t reg, float *final_value, bool IsAccel) {
 void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
 
-    // todo: update code for other axes
-    //uint16_t accel_data_raw[n];
-/*     absolute_time_t daq_start = get_absolute_time();
-    uint64_t daq_start_us = to_us_since_boot(daq_start);
-    uint64_t sample_times_us[n]; */
-
     switch (axis) {
         case X_Axis:     // X axis
         {
             for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x28, tcp_state->send_data_buffer+i, true);
+                lis3dh_read_data(0x28, tcp_state->send_data_buffer+i*sizeof(float), true);
             }
             break;
         }
         case Y_Axis:     // Y axis
         {
             for (int i = 0; i < n; i++) {
-                lis3dh_read_data(0x2A, tcp_state->send_data_buffer+i, true);
+                lis3dh_read_data(0x2A, tcp_state->send_data_buffer+i*sizeof(float), true);
             }
             break;
         }
@@ -481,11 +393,6 @@ void lis3dh_data_capture(void *arg, uint16_t n, uint8_t axis) {
         {
             for (int i = 0; i < n; i++) {
                 lis3dh_read_data(0x2C, tcp_state->send_data_buffer + i*sizeof(float), true);
-                //sample_times_us[i] = to_us_since_boot(get_absolute_time()) - daq_start_us;
-            }
-            for (int i = 0; i < n; i++) {
-                printf("Z acceleration: %.3fg\n", *(tcp_state->send_data_buffer + i*sizeof(float)) );
-                //printf("Sample time in us: %lld\n", sample_times_us[i]);
             }
             break;
         }
@@ -632,8 +539,6 @@ static err_t tcp_server_close(void *arg) {
     return err;
 }
 
-// called automatically when data is received???
-// TODO how to handle a closed connection
 err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     TCP_SERVER_T *tcp_state = (TCP_SERVER_T*)arg;
     if (!p) {
