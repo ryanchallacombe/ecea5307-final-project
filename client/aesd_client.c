@@ -23,6 +23,10 @@
 // confirm (debounce) state changes this many times
 #define STATE_CHANGE_DEBOUNCE_COUNT		3
 
+#ifndef TB_SCRIPT_PATH
+#define TB_SCRIPT_PATH	"tb_request.sh"
+#endif
+
 /**********************************
  *	Globals
  **********************************/
@@ -39,7 +43,7 @@ bool D_RUN = false;				   // 'dryer running' flag
 
 // textbelt / messaging
 //char *textbelt_script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
-char *textbelt_script_fullpath = "tb_request.sh";
+char *textbelt_script_fullpath = TB_SCRIPT_PATH;
 char *phonenumber = "9137355704";
 char *dryer_start_msg = "Dryer started ";
 char *dryer_stop_msg = "Dryer stopped ";

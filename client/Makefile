@@ -2,6 +2,7 @@ CFLAGS = -Wall -Werror -Iinclude/
 UTILS_HEADER = include/utils.h
 UTILS_SOURCE = include/utils.c
 LFLAGS = -lm
+CROSS_COMPILE_TB_SCRIPT_PATH = /aesd_client_include/tb_request.sh
 
 ## Invoke cross compilation with: >> make CROSS_COMPILE=aarch64-none-linux-gnu- all
 
@@ -12,7 +13,7 @@ all: aesd_client
 
 aesd_client: aesd_client.o utils.o
 ifdef CROSS_COMPILE
-	$(CROSS_COMPILE)gcc ${CFLAGS} -o aesd_client aesd_client.o utils.o ${LFLAGS}
+	$(CROSS_COMPILE)gcc ${CFLAGS} -DTB_SCRIPT_PATH=\"$(CROSS_COMPILE_TB_SCRIPT_PATH)\" -o aesd_client aesd_client.o utils.o ${LFLAGS}
 else
 	${CC} ${CFLAGS} -o aesd_client aesd_client.o utils.o ${LFLAGS}
 endif

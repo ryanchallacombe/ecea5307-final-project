@@ -163,6 +163,10 @@ int try_server_connect(char *server_ip, char *tcp_port, int timeout_ms) {
         return -1;
     }
     
+    /*****
+    * Test if a send call works
+    * This fixes an issue seen on the RPI where connection was successful to ip addr that we not there for some reason
+    */
     int numbytes = send(sockfd, Q_IDN, strlen(Q_IDN), 0);
     if (numbytes == -1)
     {
