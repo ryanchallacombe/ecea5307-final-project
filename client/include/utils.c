@@ -435,6 +435,7 @@ int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber) {
 	} else if (pid == 0) {                              // code executes in child pid
         if (execv(script_fullpath, cmd) == -1) {		// execv error
             perror("EXECV error"); 
+            printf("script_fullpath: %s\n", script_fullpath);
             exit(EXIT_FAILURE);
         }
     }

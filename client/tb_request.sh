@@ -30,4 +30,5 @@ fi
 curl -X POST https://textbelt.com/text \
      --data-urlencode phone=$PHONE \
      --data-urlencode message="$MSG" \
-     -d key=$APIKEY
+     -d key=$APIKEY \
+     -k 
