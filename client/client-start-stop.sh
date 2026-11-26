@@ -11,17 +11,9 @@
 
 case $1 in 
 	start)
+
 		echo "Checking for wlan0 = up"
 		MATCH_STATE="up"
-
-		# native system binary location
-		#while [ $(cat /sys/class/net/enp0s3/operstate) != "$MATCH_STATE" ]; do
-		#	echo "waiting for wlan0 to come up"
-		#	sleep 5
-		#done
-
-		#echo "Starting client application daemon"
-		#start-stop-daemon --start --name aesd_client --startas /home/ryan/projects/ecea5307-final-project/client/aesd_client -- -d
 
 		# embedded system binay location
 		while [ $(cat /sys/class/net/wlan0/operstate) != "$MATCH_STATE" ]; do

@@ -81,7 +81,10 @@ int main(int argc, char *argv[])
 	// show wall clock time
 	time_t now = time(NULL);
 	syslog(LOG_DEBUG, "***** Current time: %s\n", ctime(&now));
-	printf("***** Current time: %s\n", ctime(&now));
+	printf("***** Current time: %s\n\n", ctime(&now));
+
+	// show textbelt script path
+	printf("textbelt_script_fullpath: %s\n\n", textbelt_script_fullpath);
 
 	/************************* Signal handler setup *************************/
 	caught_signal = false; // Signal handler flag
