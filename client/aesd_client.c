@@ -24,7 +24,7 @@
 #define STATE_CHANGE_DEBOUNCE_COUNT		3
 
 #ifndef TB_SCRIPT_PATH
-#define TB_SCRIPT_PATH	"tb_request.sh"
+#define TB_SCRIPT_PATH	"/aesd_client_include/tb_request.sh"
 #endif
 
 /**********************************
