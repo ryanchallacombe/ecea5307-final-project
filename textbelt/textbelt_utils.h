@@ -11,5 +11,6 @@
 #include <errno.h>
 
 int exec_textbelt_call(char *script_fullpath, char *msg, char *phonenumber);
+ssize_t readLine(int fd, void *buffer, size_t n);
 
 #endif
