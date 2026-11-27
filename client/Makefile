@@ -4,6 +4,8 @@ UTILS_SOURCE = include/utils.c
 LFLAGS = -lm
 TB_PATH = tb_request.sh
 CFLAGS += -DTB_SCRIPT_PATH=\"$(TB_PATH)\"
+SUBSCRIBER_FPATH = subscribers.conf
+CFLAGS += -DSUBSCRIBER_FILE_PATH=\"$(SUBSCRIBER_FPATH)\"
 $(info ***** CFLAGS is $(CFLAGS) *****)
 
 all: aesd_client

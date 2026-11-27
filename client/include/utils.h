@@ -68,6 +68,6 @@ void calc_stats(float *buf, int count, struct AxisStats *ax_stats);
 int try_server_connect(char *server_ip, char *tcp_port, int timeout_ms);
 void build_ipv4_addr_array(char *pfx, int suf_start, int suf_end, char target_ip[][IP_ADDR_CHAR_COUNT+1]);
 int update_axis_vibe_stats(struct AxisStats *axis_stats, int samples, int fd, struct Buffers *buf);
-
+ssize_t readLine(int fd, void *buffer, size_t n);
 
 #endif

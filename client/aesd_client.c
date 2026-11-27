@@ -23,9 +23,17 @@
 // confirm (debounce) state changes this many times
 #define STATE_CHANGE_DEBOUNCE_COUNT		3
 
+// textbelt bash script
 #ifndef TB_SCRIPT_PATH
-#define TB_SCRIPT_PATH	"/aesd_client_include/tb_request.sh"
+#define TB_SCRIPT_PATH				"/aesd_client_include/tb_request.sh"
 #endif
+
+// subscriber file
+#ifndef SUBSCRIBER_FILE_PATH
+#define SUBSCRIBER_FILE_PATH     	"/aesd_client_include/subscribers.conf"
+#endif
+#define MAX_SUBSCRIBER_CT   		5
+#define PHONE_NUMBER_CHAR_CT   		11
 
 /**********************************
  *	Globals
@@ -42,13 +50,13 @@ int g_debounce_sleep_secs = 2;
 bool D_RUN = false;				   // 'dryer running' flag
 
 // textbelt / messaging
-//char *textbelt_script_fullpath = "/home/ryan/projects/ecea5307-final-project/textbelt/tb_request.sh";
 char *textbelt_script_fullpath = TB_SCRIPT_PATH;
 char *phonenumber = "9137355704";
 char *dryer_start_msg = "Dryer started ";
 char *dryer_stop_msg = "Dryer stopped ";
 char *now_str;
-char text_msg[100];		
+char text_msg[100];
+char *subscriber_file_path = SUBSCRIBER_FILE_PATH;
 
 // buffers for send and receive
 struct Buffers buf = {0};
@@ -85,6 +93,10 @@ int main(int argc, char *argv[])
 
 	// show textbelt script path
 	printf("textbelt_script_fullpath: %s\n\n", textbelt_script_fullpath);
+	syslog(LOG_DEBUG, "textbelt_script_fullpath: %s\n\n", textbelt_script_fullpath);
+
+	// show subscriber file path
+	printf("subscriber_file_path: %s\n\n", subscriber_file_path);
 
 	/************************* Signal handler setup *************************/
 	caught_signal = false; // Signal handler flag
@@ -136,6 +148,29 @@ int main(int argc, char *argv[])
 	char target_ip[suf_end - suf_start + 1][ip_addr_char_count+1];			// include room for null terminator
 
 	build_ipv4_addr_array(slash_24, suf_start, suf_end, target_ip);
+
+	/************************* Get list of subscriber phone numbers *************************/
+    int fd = open(subscriber_file_path, O_RDONLY, 0644);
+    if (fd == -1) {
+        perror("Error opening file");
+        return 1;
+    }
+
+    // setup buffer for reading the subscriber phone numbers
+    //int max_subscriber_ct = MAX_SUBSCRIBER_CT;
+    //int phone_number_char = PHONE_NUMBER_CHAR_CT;
+    //char subscriber_phone_numbers[max_subscriber_ct][phone_number_char];
+    char subscriber_phone_numbers[MAX_SUBSCRIBER_CT][PHONE_NUMBER_CHAR_CT];
+    int num_read = 0;
+    int subscriber_count = 0;
+    for (subscriber_count = 0; subscriber_count < MAX_SUBSCRIBER_CT; subscriber_count++) {
+        if ( (num_read = readLine(fd, subscriber_phone_numbers[subscriber_count], PHONE_NUMBER_CHAR_CT)) == 0) {
+            break;
+        } 
+        printf("subscriber_phone_numbers[subscriber_count]: %s\n", subscriber_phone_numbers[subscriber_count]);
+    } 
+    printf("subscriber_count: %i\n", subscriber_count);
+    close(fd);
 
 	/************************* Socket *************************/
 	int poll_timeout_ms = 1000;
@@ -265,7 +300,9 @@ int main(int argc, char *argv[])
 				strncpy(text_msg, dryer_stop_msg, strlen(dryer_stop_msg));
 				strncpy(text_msg + strlen(dryer_stop_msg), now_str, strlen(now_str));
 				if (SEND_TEXTBELT_REQ) {
-					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);
+					for(int i = 0; i < subscriber_count; i++) {
+						exec_textbelt_call(textbelt_script_fullpath, text_msg, subscriber_phone_numbers[i]);	
+					}
 				}
 
 				printf("***************** Dryer stopped\n");
@@ -283,7 +320,9 @@ int main(int argc, char *argv[])
 				strncpy(text_msg, dryer_start_msg, strlen(dryer_start_msg));
 				strncpy(text_msg + strlen(dryer_start_msg), now_str, strlen(now_str));
 				if (SEND_TEXTBELT_REQ) {
-					exec_textbelt_call(textbelt_script_fullpath, text_msg, phonenumber);	
+					for(int i = 0; i < subscriber_count; i++) {
+						exec_textbelt_call(textbelt_script_fullpath, text_msg, subscriber_phone_numbers[i]);	
+					}	
 				}
 
 				printf("******* Dryer started\n");
